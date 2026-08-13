@@ -1,0 +1,78 @@
+This is cutadapt 5.2 with Python 3.14.6
+Command line parameters: -j 2 -g TCCAGTCAGGTGTGATGCTCGGGGATCCAGGAATTCGGAGCGGT --discard-untrimmed -o - -
+Processing single-end reads on 2 cores ...
+
+=== Summary ===
+
+Total reads processed:              73,285,799
+Reads with adapters:                73,141,590 (99.8%)
+
+== Read fate breakdown ==
+Reads discarded as untrimmed:          144,209 (0.2%)
+Reads written (passing filters):    73,141,590 (99.8%)
+
+Total basepairs processed: 7,401,865,699 bp
+Total written (filtered):  4,169,224,262 bp (56.3%)
+
+=== Adapter 1 ===
+
+Sequence: TCCAGTCAGGTGTGATGCTCGGGGATCCAGGAATTCGGAGCGGT; Type: regular 5'; Length: 44; Trimmed: 73141590 times
+
+Minimum overlap: 3
+No. of allowed errors:
+1-9 bp: 0; 10-19 bp: 1; 20-29 bp: 2; 30-39 bp: 3; 40-44 bp: 4
+
+Overview of removed sequences
+length	count	expect	max.err	error counts
+3	16	1145090.6	0	16
+4	4	286272.7	0	4
+31	26	0.0	3	25 0 1
+32	73	0.0	3	70 2 1
+33	207	0.0	3	125 80 1 1
+34	245	0.0	3	145 43 56 1
+35	423	0.0	3	84 170 53 116
+36	577	0.0	3	172 113 205 87
+37	1100	0.0	3	310 128 129 533
+38	1630	0.0	3	282 627 225 496
+39	2316	0.0	3	911 310 824 266 5
+40	5531	0.0	4	325 2522 450 820 1414
+41	11741	0.0	4	1153 730 3913 4850 1095
+42	46809	0.0	4	1398 3054 37197 2254 2906
+43	751634	0.0	4	26222 690769 28344 3347 2952
+44	71534965	0.0	4	69004982 2306090 168267 31196 24430
+45	778841	0.0	4	503075 251511 14671 2908 6676
+46	4195	0.0	4	92 1924 621 54 1504
+47	621	0.0	4	183 13 14 223 188
+48	481	0.0	4	430 27 2 2 20
+49	44	0.0	4	36 3 1 4
+50	10	0.0	4	2 2 2 4
+51	4	0.0	4	2 0 0 1 1
+52	10	0.0	4	6 3 0 1
+53	3	0.0	4	2 0 1
+54	7	0.0	4	6 0 0 1
+55	2	0.0	4	2
+56	2	0.0	4	1 0 0 0 1
+57	5	0.0	4	2 0 0 3
+58	3	0.0	4	2 0 1
+59	7	0.0	4	4 1 0 2
+60	1	0.0	4	1
+61	5	0.0	4	1 4
+62	8	0.0	4	8
+63	4	0.0	4	4
+64	7	0.0	4	7
+65	1	0.0	4	1
+66	3	0.0	4	3
+67	1	0.0	4	0 1
+68	1	0.0	4	1
+69	1	0.0	4	0 0 0 1
+70	4	0.0	4	3 1
+71	1	0.0	4	1
+72	1	0.0	4	1
+73	2	0.0	4	2
+75	1	0.0	4	0 0 1
+76	8	0.0	4	7 1
+77	1	0.0	4	0 1
+78	1	0.0	4	1
+79	1	0.0	4	1
+80	2	0.0	4	1 1
+81	4	0.0	4	3 1

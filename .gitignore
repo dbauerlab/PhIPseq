@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# generated reference + index (rebuildable from source refs, large)
+reference/*.fasta
+reference/bowtie2_index/
+
+# large intermediates
+results/*.bam
+results/*.sam
+results/*.fastq.gz

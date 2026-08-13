@@ -1,0 +1,83 @@
+This is cutadapt 5.2 with Python 3.14.6
+Command line parameters: -j 2 -g TCCAGTCAGGTGTGATGCTCGGGGATCCAGGAATTCGGAGCGGT --discard-untrimmed -o - -
+Processing single-end reads on 2 cores ...
+
+=== Summary ===
+
+Total reads processed:              87,428,825
+Reads with adapters:                87,334,609 (99.9%)
+
+== Read fate breakdown ==
+Reads discarded as untrimmed:           94,216 (0.1%)
+Reads written (passing filters):    87,334,609 (99.9%)
+
+Total basepairs processed: 8,830,311,325 bp
+Total written (filtered):  4,978,291,719 bp (56.4%)
+
+=== Adapter 1 ===
+
+Sequence: TCCAGTCAGGTGTGATGCTCGGGGATCCAGGAATTCGGAGCGGT; Type: regular 5'; Length: 44; Trimmed: 87334609 times
+
+Minimum overlap: 3
+No. of allowed errors:
+1-9 bp: 0; 10-19 bp: 1; 20-29 bp: 2; 30-39 bp: 3; 40-44 bp: 4
+
+Overview of removed sequences
+length	count	expect	max.err	error counts
+3	4	1366075.4	0	4
+20	1	0.0	2	0 1
+27	1	0.0	2	0 1
+28	3	0.0	2	0 1 2
+30	2	0.0	3	0 2
+31	75	0.0	3	72 3
+32	124	0.0	3	119 3 2
+33	265	0.0	3	146 117 2
+34	299	0.0	3	172 57 69 1
+35	604	0.0	3	115 171 92 226
+36	901	0.0	3	386 140 269 106
+37	1362	0.0	3	402 166 153 641
+38	2032	0.0	3	333 802 270 625 2
+39	2748	0.0	3	1078 392 1005 266 7
+40	6898	0.0	4	496 3036 524 950 1892
+41	15556	0.0	4	1419 964 4815 6733 1625
+42	58887	0.0	4	1742 3910 47736 2711 2788
+43	929153	0.0	4	32913 863018 26935 3496 2791
+44	85368162	0.0	4	82834581 2362629 126799 22445 21708
+45	941527	0.0	4	606249 313501 11837 2112 7828
+46	4712	0.0	4	123 2560 890 48 1091
+47	413	0.0	4	192 16 29 28 148
+48	621	0.0	4	566 41 2 3 9
+49	44	0.0	4	38 3 0 3
+50	15	0.0	4	8 1 3 1 2
+51	8	0.0	4	2 1 1 3 1
+52	32	0.0	4	29 1 0 1 1
+53	4	0.0	4	2 1 1
+54	8	0.0	4	5 1 1 1
+55	2	0.0	4	1 0 0 1
+56	7	0.0	4	1 0 0 1 5
+57	3	0.0	4	2 0 0 1
+58	5	0.0	4	0 1 0 4
+59	11	0.0	4	4 0 0 7
+60	6	0.0	4	0 0 4 2
+61	7	0.0	4	2 5
+62	4	0.0	4	4
+63	2	0.0	4	2
+64	15	0.0	4	14 0 0 1
+65	11	0.0	4	11
+66	1	0.0	4	1
+67	4	0.0	4	3 1
+68	5	0.0	4	5
+69	2	0.0	4	2
+70	4	0.0	4	4
+71	4	0.0	4	4
+72	4	0.0	4	3 0 0 0 1
+73	4	0.0	4	3 0 0 0 1
+74	1	0.0	4	1
+75	16	0.0	4	15 1
+76	9	0.0	4	9
+77	1	0.0	4	1
+78	5	0.0	4	5
+79	4	0.0	4	3 0 1
+81	9	0.0	4	9
+82	1	0.0	4	0 0 0 1
+84	1	0.0	4	1

@@ -1,0 +1,4 @@
+=== launching TC_1 (CoV, CAY9116A7_S70) ===
+=== launching TC_2 (CoV, CAY9116A8_S71) ===
+scripts/run_all.sh: line 19: wait: -n: invalid option
+wait: usage: wait [n]

@@ -1,0 +1,8 @@
+Warning: skipping read 'LH00442:282:23G2Y5LT3:7:1266:11991:3831 2:N:0:GAACCGCA+CATTATGC' because length (0) <= # seed mismatches (0)
+Warning: skipping read 'LH00442:282:23G2Y5LT3:7:1266:11991:3831 2:N:0:GAACCGCA+CATTATGC' because it was < 2 characters long
+99462409 reads; of these:
+  99462409 (100.00%) were unpaired; of these:
+    3681744 (3.70%) aligned 0 times
+    93159689 (93.66%) aligned exactly 1 time
+    2620976 (2.64%) aligned >1 times
+96.30% overall alignment rate
