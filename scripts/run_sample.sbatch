@@ -1,9 +1,10 @@
 #!/bin/bash
-# SLURM array job: one task per row of scripts/samples.tsv, replacing
-# run_all.sh's bash loop for cluster deployment. SLURM's own array
-# scheduling is left unthrottled (no `%N` on --array) -- the old
-# MAX_PARALLEL=1 sequential-only workaround existed only because the old
-# SMB-mounted FASTQ share errored under concurrent reads, a limitation the
+# SLURM array job: one task per row of scripts/samples.tsv -- the sole
+# orchestration mechanism for running all samples (there is no local/
+# non-SLURM batch driver in this repo). SLURM's own array scheduling is
+# left unthrottled (no `%N` on --array) -- the old MAX_PARALLEL=1
+# sequential-only workaround existed only because the old SMB-mounted
+# FASTQ share errored under concurrent reads, a limitation the
 # HPC's storage doesn't share.
 #
 # Resources requested flat rather than tuned tightly: the 7-day wall-clock

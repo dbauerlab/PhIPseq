@@ -46,7 +46,6 @@ PhIPseq/
 │   ├── build_reference.py         # parses source library references -> combined FASTA + metadata
 │   ├── setup_env.sh               # builds/updates the "phipseq" conda env from environment.yml
 │   ├── run_sample.sh              # per-sample: merge lanes -> cutadapt (paired) -> bowtie2 (paired) -> counts
-│   ├── run_all.sh                 # local/dev driver: runs run_sample.sh for all/selected samples in samples.tsv
 │   ├── run_sample.sbatch          # SLURM array job wrapping run_sample.sh, one task per sample
 │   ├── build_index.sbatch         # SLURM job: bowtie2-build the combined index
 │   ├── summarize.sbatch           # SLURM job: summarize.py + the three figure scripts
@@ -134,13 +133,13 @@ Python/shell constants now live in JSON under `reference/`:
   anymore.
 - **`scripts/samples.tsv`** — tab-separated sample sheet, columns `tc_id`,
   `library` (`CoV` or `Vir3`), `sample_prefix`. Drives `run_sample.sbatch`'s
-  array-task-to-sample lookup, `run_all.sh`'s local loop, and which columns
-  appear in the aggregation scripts' outputs.
+  array-task-to-sample lookup and which columns appear in the aggregation
+  scripts' outputs.
 - **`scripts/samples_preview.tsv`** — same schema, restricted to `TC_1`–
   `TC_3`. Usable as an alternate first positional argument to
   `summarize.py`, `completeness_figures.py`, `evenness_summary_figure.py`,
   and `overview_figure.py` for producing outputs from a subset of samples.
-  Not read by `run_all.sh`/`run_sample.sbatch`, which always use
+  Not read by `run_sample.sbatch`, which always uses
   `samples.tsv`.
 
 ## Usage
@@ -172,12 +171,12 @@ parent of `scripts/`).
    ```bash
    sbatch scripts/run_sample.sbatch
    ```
-   For local/dev use without SLURM, `run_all.sh` drives the same
-   `run_sample.sh` sequentially instead (requires `cutadapt`/`bowtie2`/
-   `samtools` on `PATH` and the `phipseq` conda env activated):
+   For local/dev use without SLURM, `run_sample.sh` can be invoked directly
+   per sample instead (requires `cutadapt`/`bowtie2`/`samtools` on `PATH`
+   and the `phipseq` conda env activated) — there is no batch driver for
+   this anymore, so each sample needs its own invocation:
    ```bash
-   bash scripts/run_all.sh            # all samples in samples.tsv
-   bash scripts/run_all.sh TC_5 TC_6  # or restrict to specific samples
+   bash scripts/run_sample.sh TC_1 CoV CAY9116A7_S70
    ```
 7. **Aggregate counts + QC report**, once all samples have finished
    (submit with a dependency on the array job's job ID):
@@ -204,12 +203,11 @@ not from filename order:
 2. `build_index.sbatch` (`bowtie2-build`) — requires
    `reference/combined_peptides.fasta` from step 1.
 3. `reference/adapters.json` — hand-maintained, no script dependency.
-4. `run_sample.sbatch` (array job) / `run_all.sh` (local) — each task calls
-   `run_sample.sh` once per sample row of `scripts/samples.tsv`; requires
+4. `run_sample.sbatch` (array job) — each task calls `run_sample.sh` once
+   per sample row of `scripts/samples.tsv`; requires
    `reference/adapters.json` (step 3) and `reference/bowtie2_index/combined`
-   (step 2) to exist. Samples are independent of each other (SLURM's array
-   scheduling runs them unthrottled/concurrently; `run_all.sh` runs them
-   sequentially).
+   (step 2) to exist. Samples are independent of each other, and SLURM's
+   array scheduling runs them unthrottled/concurrently.
 5. `summarize.py` — requires `results/<tc_id>/counts.tsv`,
    `results/<tc_id>/cutadapt.log`, `results/<tc_id>/bowtie2.log` for every
    sample in its sample sheet (from step 4), and
@@ -240,7 +238,7 @@ flowchart TD
 
     ADAPTERSJSON["reference/adapters.json\n(hand-maintained)"]
 
-    SAMPLESTSV["scripts/samples.tsv"] --> RUNALL["run_sample.sbatch (array)\n/ run_all.sh (local)"]
+    SAMPLESTSV["scripts/samples.tsv"] --> RUNALL["run_sample.sbatch (array)"]
     RUNALL --> RS["run_sample.sh (per sample):\nmerge lanes -> cutadapt (paired)\n-> bowtie2 (paired) -> counts"]
     ADAPTERSJSON --> RS
     INDEX --> RS
@@ -286,8 +284,8 @@ flowchart TD
   `build_index.sbatch`; consumed only by `run_sample.sh` (bowtie2 `-x`
   argument).
 - **`scripts/samples.tsv`** / **`scripts/samples_preview.tsv`** — read by
-  `run_sample.sbatch`/`run_all.sh` (always `samples.tsv`) and by
-  `summarize.py`, `completeness_figures.py`, `evenness_summary_figure.py`,
+  `run_sample.sbatch` (always `samples.tsv`) and by `summarize.py`,
+  `completeness_figures.py`, `evenness_summary_figure.py`,
   `overview_figure.py` (default `samples.tsv`, overridable via first CLI
   argument).
 - **`results/<tc_id>/counts.tsv`** — one paired-end fragment count per
@@ -441,34 +439,11 @@ each lane 5 times / 20s backoff specifically to work around a macOS/SMB
   `PATH` for the JSON config-loading step (the activated `phipseq` conda
   env satisfies this).
 
-### run_all.sh
-- Purpose: local/dev driver — orchestrate `run_sample.sh` across the sample
-  sheet without SLURM, one sample at a time.
-- Inputs: `scripts/samples.tsv` (columns `tc_id`, `library`,
-  `sample_prefix`); optional CLI args restricting which `tc_id`s to run.
-- Outputs: `results/<tc_id>.run.log` per launched sample (captured
-  stdout/stderr from `run_sample.sh`); indirectly, everything
-  `run_sample.sh` produces (see above).
-- Key steps:
-  - Resolve the project directory relative to this script's own location.
-  - Read `scripts/samples.tsv`, skipping the header row.
-  - For each sample row, skip it unless it matches an optional CLI
-    allow-list; if no CLI args given, run all samples.
-  - Launch `run_sample.sh <tc_id> <library> <sample_prefix>` in the
-    background, redirecting output to `results/<tc_id>.run.log`.
-  - Batch launches in groups of `MAX_PARALLEL`, `wait`-ing for each batch
-    before starting the next.
-- Key parameters: `MAX_PARALLEL=1` (hardcoded; a holdover from the
-  pre-migration SMB-mount concurrency limit — harmless for local/dev use,
-  but not the concurrency mechanism used on the cluster, where
-  `run_sample.sbatch`'s unthrottled array job is used instead); positional
-  CLI args = optional `tc_id` allow-list (default: all samples in
-  `samples.tsv`).
-- Dependencies: bash only; calls `run_sample.sh`.
-
 ### run_sample.sbatch
-- Purpose: SLURM array job wrapping `run_sample.sh` — the cluster-native
-  replacement for `run_all.sh`'s orchestration role.
+- Purpose: SLURM array job wrapping `run_sample.sh` — the sole orchestration
+  mechanism for running all samples (there is no local/non-SLURM batch
+  driver in this repo; `run_sample.sh` can still be invoked directly for a
+  single sample, see [Usage](#usage)).
 - Inputs: `scripts/samples.tsv` (row looked up via `SLURM_ARRAY_TASK_ID`);
   `reference/hpc_modules.json` (module versions, hardcoded in the header to
   match).
