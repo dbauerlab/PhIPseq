@@ -7,11 +7,17 @@
 # Submit with a dependency on the run_sample.sbatch array job, so it only
 # starts once every sample has finished:
 #   sbatch --dependency=afterok:<run_sample_array_job_id> scripts/summarize.sbatch
+#
+# SLURM's own default output naming applies (no static --output directive
+# here, since results/ now lives in run_dir -- configured in
+# reference/paths.json -- not at a fixed path relative to the repo) --
+# pass --output= explicitly at submission time, or submit from within
+# run_dir, if you want control over where the job's own stdout/stderr
+# capture lands.
 #SBATCH --job-name=phipseq_summarize
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --time=02:00:00
-#SBATCH --output=results/summarize_%j.slurm.log
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

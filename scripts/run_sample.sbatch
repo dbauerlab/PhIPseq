@@ -13,12 +13,19 @@
 # one sample (trim, then align), so 4 CPUs covers the peak.
 #
 # Submit with: sbatch scripts/run_sample.sbatch
+#
+# SLURM's own default output naming applies (no static --output directive
+# here, since results/ now lives in run_dir -- configured in
+# reference/paths.json -- not at a fixed path relative to the repo) --
+# pass --output= explicitly at submission time, or submit from within
+# run_dir, if you want control over where the job's own stdout/stderr
+# capture lands. run_sample.sh's own cutadapt.log/bowtie2.log always land
+# in run_dir/results/<tc_id>/ regardless.
 #SBATCH --job-name=phipseq_run_sample
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=7-00:00:00
 #SBATCH --array=1-6
-#SBATCH --output=results/run_sample_%A_%a.slurm.log
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

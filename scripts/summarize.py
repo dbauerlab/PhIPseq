@@ -1,16 +1,19 @@
 """Aggregate per-sample counts into a peptide x sample matrix and a QC report:
 coverage, dropouts, evenness, cross-library mapping, batch reproducibility.
 
-Reads results/<TC_ID>/counts.tsv (one paired-end fragment count per
-peptide, produced by run_sample.sh's merged-lane, paired-mode
+Reads <run_dir>/results/<TC_ID>/counts.tsv (one paired-end fragment count
+per peptide, produced by run_sample.sh's merged-lane, paired-mode
 cutadapt/bowtie2 pipeline) + its cutadapt.log/bowtie2.log, and
-reference/combined_metadata.csv. Writes:
+<run_dir>/reference/combined_metadata.csv. Writes, all under <run_dir>:
   results/count_matrix.csv
   results/qc_summary.csv
   results/figures/*.png
   results/summary.md
+<run_dir> is configured in reference/paths.json, separate from this repo
+checkout.
 """
 import csv
+import json
 import re
 import sys
 from pathlib import Path
@@ -23,10 +26,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-RESULTS_DIR = PROJECT_DIR / "results"
-FIG_DIR = RESULTS_DIR / "figures"
 SAMPLES_TSV = PROJECT_DIR / "scripts" / "samples.tsv"
-META_CSV = PROJECT_DIR / "reference" / "combined_metadata.csv"
+
+# run_dir (where results/ and generated reference data live) is configured
+# in reference/paths.json, a hand-maintained config file kept in the repo
+# checkout -- separate from run_dir itself.
+_paths = json.loads((PROJECT_DIR / "reference" / "paths.json").read_text())
+RUN_DIR = Path(_paths["run_dir"])
+RESULTS_DIR = RUN_DIR / "results"
+FIG_DIR = RESULTS_DIR / "figures"
+META_CSV = RUN_DIR / "reference" / "combined_metadata.csv"
 
 
 def load_samples():

@@ -20,8 +20,12 @@ Each source reference stores the full synthesized oligo (constant vector flanks
     against the Vir2 rows), i.e. they're one physical synthesized pool --
     the actual T7 Vir3.2 library -- so all are included.
 
-Output: reference/combined_peptides.fasta (namespaced IDs 'CoV|<Barcode ID>'
-/ 'Vir3|<id>') and reference/combined_metadata.csv.
+Output: <run_dir>/reference/combined_peptides.fasta (namespaced IDs
+'CoV|<Barcode ID>' / 'Vir3|<id>') and
+<run_dir>/reference/combined_metadata.csv, where <run_dir> is configured in
+reference/paths.json -- generated reference data is kept out of the repo
+checkout, separate from the hand-maintained config that lives in
+reference/*.json here.
 
 Source-file locations and library-design constants (vector anchors, minimum
 insert length) live in reference/paths.json and
@@ -36,12 +40,17 @@ from pathlib import Path
 
 import pandas as pd
 
-OUT_DIR = Path(__file__).resolve().parent.parent / "reference"
+# Hand-maintained config lives alongside the scripts, in the repo checkout.
+CONFIG_DIR = Path(__file__).resolve().parent.parent / "reference"
+_paths = json.loads((CONFIG_DIR / "paths.json").read_text())
+_params = json.loads((CONFIG_DIR / "build_reference_params.json").read_text())
+
+# Generated reference data (FASTA + metadata) is written to run_dir instead
+# of the repo checkout, so cloning/redeploying the repo never has to carry
+# run output around.
+OUT_DIR = Path(_paths["run_dir"]) / "reference"
 FASTA_OUT = OUT_DIR / "combined_peptides.fasta"
 META_OUT = OUT_DIR / "combined_metadata.csv"
-
-_paths = json.loads((OUT_DIR / "paths.json").read_text())
-_params = json.loads((OUT_DIR / "build_reference_params.json").read_text())
 
 COV_XLSX = _paths["cov_xlsx"]
 VIR3_CSV = _paths["vir3_csv"]

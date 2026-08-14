@@ -21,8 +21,10 @@ SAMPLE_PREFIX=$3
 SUBSAMPLE=${4:-0}
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INDEX="$PROJECT_DIR/reference/bowtie2_index/combined"
-OUT_DIR="$PROJECT_DIR/results/$TC_ID"
+# RUN_DIR (where results/ and the generated bowtie2 index live) is resolved
+# below from reference/paths.json, once config is loaded -- it's a separate
+# directory from PROJECT_DIR (the repo checkout) so the repo stays free of
+# run output.
 
 # A fresh, unique temp directory per invocation -- honors $TMPDIR if the
 # scheduler sets one (SLURM typically provisions node-local scratch there),
@@ -33,14 +35,13 @@ OUT_DIR="$PROJECT_DIR/results/$TC_ID"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-mkdir -p "$OUT_DIR"
-
 # --- Load config ------------------------------------------------------------
-# Paths/tunables/adapters all live in reference/*.json rather than being
-# hardcoded here, so redeploying to a new machine only means editing those
-# files. This one python3 call loads all three and prints shell variable
-# assignments for `eval` to pick up -- python3 only needs the stdlib `json`
-# module here, so it works whether or not the "phipseq" conda env is active.
+# Paths/tunables/adapters all live in reference/*.json (in the repo
+# checkout) rather than being hardcoded here, so redeploying to a new
+# machine only means editing those files. This one python3 call loads all
+# three and prints shell variable assignments for `eval` to pick up --
+# python3 only needs the stdlib `json` module here, so it works whether or
+# not the "phipseq" conda env is active.
 eval "$(python3 - "$PROJECT_DIR" "$LIBRARY" <<'PY'
 import json
 import shlex
@@ -52,6 +53,7 @@ params = json.load(open(f"{project_dir}/reference/run_params.json"))
 adapters = json.load(open(f"{project_dir}/reference/adapters.json"))[library]
 
 print(f"FASTQ_DIR={shlex.quote(paths['fastq_dir'])}")
+print(f"RUN_DIR={shlex.quote(paths['run_dir'])}")
 print(f"BOWTIE_THREADS={shlex.quote(str(params['bowtie_threads']))}")
 print(f"CUTADAPT_THREADS={shlex.quote(str(params['cutadapt_threads']))}")
 print("LANES=(" + " ".join(shlex.quote(lane) for lane in params["lanes"]) + ")")
@@ -59,6 +61,12 @@ print(f"R1_ADAPTER={shlex.quote(adapters['R1'])}")
 print(f"R2_ADAPTER={shlex.quote(adapters['R2'])}")
 PY
 )"
+
+# RUN_DIR (separate from PROJECT_DIR, the repo checkout) is where generated
+# reference data and results/ live -- see reference/paths.json.
+INDEX="$RUN_DIR/reference/bowtie2_index/combined"
+OUT_DIR="$RUN_DIR/results/$TC_ID"
+mkdir -p "$OUT_DIR"
 
 # --- Step 1: merge lanes, per mate ------------------------------------------
 # Concatenate every lane's raw FASTQ for one mate into a single file before

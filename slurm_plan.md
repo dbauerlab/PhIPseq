@@ -405,3 +405,41 @@ doing, not left comment-sparse as several of the current scripts are.
   paired-mode `cutadapt`/`bowtie2` log parsers, and change `qc_summary.csv`
   to one set of pair-level columns instead of the current R1/R2-suffixed
   columns (§5e).
+
+## 9. Repo checkout vs. run directory
+
+Implemented post-migration, at the user's request: the repo checkout and
+the pipeline's run output are kept in separate directories, rather than
+everything living under wherever the repo is cloned.
+
+- **Mechanism**: a new `run_dir` key in `reference/paths.json` (placeholder,
+  same as the other path values in that file — see §3/§8). Every Python
+  script and `run_sample.sh` resolves `run_dir` from this file (found via
+  the repo checkout's own location, `Path(__file__).resolve().parent.parent`),
+  then writes/reads all generated data there instead of relative to the
+  script's own location.
+- **What moved out of the repo**: `results/` (per-sample logs/counts,
+  `count_matrix.csv`, `qc_summary.csv`, `summary.md`, figures) plus the
+  *generated* reference data — `combined_peptides.fasta`, the bowtie2
+  index, and `combined_metadata.csv` (previously tracked in git despite
+  being generated — that convention ends here). Hand-maintained config
+  (`reference/*.json` other than the generated files, `adapters.json`,
+  `scripts/samples.tsv`) stays in the repo checkout, since it's small,
+  version-controlled config rather than run output.
+- **`.sbatch` `--output` directives dropped**: `run_sample.sbatch`,
+  `summarize.sbatch`, and `build_index.sbatch` no longer set a static
+  `#SBATCH --output=results/...` path, since `results/` is no longer at a
+  fixed location relative to the repo (it's wherever `run_dir` points, only
+  known once the script parses JSON at runtime — too late for an `#SBATCH`
+  directive, which SLURM parses before any script code runs). SLURM's own
+  default output naming applies instead; pass `--output=` explicitly at
+  submission time, or submit from within `run_dir`, for control over where
+  the job log lands.
+- **`build_index.sbatch`** needed its own small `python3 -c` call to resolve
+  `run_dir`, since (unlike `run_sample.sbatch`/`summarize.sbatch`) it builds
+  paths itself rather than delegating entirely to another script that
+  already does the JSON loading.
+- **Pre-migration `results/`/`reference/` content already checked into this
+  repo is untouched** by this change — it predates the run_dir split
+  entirely and is called out as a legacy/historical artifact in
+  [README.md](README.md#overview), not deleted or moved.

@@ -1,5 +1,6 @@
 {
   "fastq_dir": "TODO: set to the HPC path containing this sample set's raw FASTQ files (used by run_sample.sh)",
   "cov_xlsx": "TODO: set to the HPC path of the CoV Library Reference.xlsx source file (used by build_reference.py)",
-  "vir3_csv": "TODO: set to the HPC path of the virscan3.peptide.metadata.csv source file (used by build_reference.py)"
+  "vir3_csv": "TODO: set to the HPC path of the virscan3.peptide.metadata.csv source file (used by build_reference.py)",
+  "run_dir": "TODO: set to a directory outside this repo where results/ and generated reference data (combined_peptides.fasta, bowtie2_index/, combined_metadata.csv) will be written -- keeps the repo checkout free of run output"
 }
