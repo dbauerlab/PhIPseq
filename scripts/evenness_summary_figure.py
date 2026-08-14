@@ -5,6 +5,7 @@ reads) called out explicitly rather than buried in a max/min ratio.
 
 Usage: evenness_summary_figure.py [samples_tsv]  (defaults to scripts/samples.tsv)
 """
+import json
 import sys
 from pathlib import Path
 
@@ -20,7 +21,11 @@ RESULTS_DIR = PROJECT_DIR / "results"
 FIG_DIR = RESULTS_DIR / "figures"
 SAMPLES_TSV = PROJECT_DIR / "scripts" / "samples.tsv"
 META_CSV = PROJECT_DIR / "reference" / "combined_metadata.csv"
-OUTLIER_THRESHOLD = 10  # reads; peptides at or below this are called out individually
+
+# Figure thresholds live in reference/figure_params.json (shared with
+# overview_figure.py) rather than being duplicated as a literal here.
+_fig_params = json.loads((PROJECT_DIR / "reference" / "figure_params.json").read_text())
+OUTLIER_THRESHOLD = _fig_params["outlier_threshold"]  # reads; peptides at or below this are called out individually
 
 
 def main():

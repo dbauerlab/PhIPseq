@@ -1,0 +1,4 @@
+{
+  "outlier_threshold": 10,
+  "library_colors": {"CoV": "tab:blue", "Vir3": "tab:orange"}
+}

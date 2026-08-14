@@ -22,26 +22,36 @@ Each source reference stores the full synthesized oligo (constant vector flanks
 
 Output: reference/combined_peptides.fasta (namespaced IDs 'CoV|<Barcode ID>'
 / 'Vir3|<id>') and reference/combined_metadata.csv.
+
+Source-file locations and library-design constants (vector anchors, minimum
+insert length) live in reference/paths.json and
+reference/build_reference_params.json rather than being hardcoded here, so
+redeploying to a new machine only means editing those files.
 """
 import csv
+import json
 import re
 import sys
 from pathlib import Path
 
 import pandas as pd
 
-COV_XLSX = "/Users/cayolt/Library/CloudStorage/Dropbox-TheFrancisCrick/Tiphaine Cayol/PhIP-Seq/Elledge Lab Files/References/CoV Library Reference.xlsx"
-VIR3_CSV = "/Users/cayolt/Library/CloudStorage/Dropbox-TheFrancisCrick/Tiphaine Cayol/PhIP-Seq/Elledge Lab Files/References/VirScan3 - to check - high-throughput-profiling-of-the-anti-viral-antibo/virscan_annotations/virscan3.peptide.metadata.csv"
-
 OUT_DIR = Path(__file__).resolve().parent.parent / "reference"
 FASTA_OUT = OUT_DIR / "combined_peptides.fasta"
 META_OUT = OUT_DIR / "combined_metadata.csv"
 
-COV_ANCHOR_5 = "GAATTCGGAGCGGT"
-COV_ANCHOR_3 = "CACTGCACTCGAGA"
+_paths = json.loads((OUT_DIR / "paths.json").read_text())
+_params = json.loads((OUT_DIR / "build_reference_params.json").read_text())
 
-VIR3_ANCHOR_5 = "GGAATTCCGCTGCGT"
-VIR3_ANCHOR_3 = "GAAGAGCTCGA"
+COV_XLSX = _paths["cov_xlsx"]
+VIR3_CSV = _paths["vir3_csv"]
+
+COV_ANCHOR_5 = _params["cov_anchor_5"]
+COV_ANCHOR_3 = _params["cov_anchor_3"]
+
+VIR3_ANCHOR_5 = _params["vir3_anchor_5"]
+VIR3_ANCHOR_3 = _params["vir3_anchor_3"]
+MIN_VIR3_INSERT_LEN = _params["min_vir3_insert_len"]
 
 META_COLS = ["ref_id", "library", "source_id", "parent_peptide_id", "organism", "protein_name", "peptide_aa", "start", "end", "insert_len"]
 
@@ -103,7 +113,7 @@ def load_vir3():
                 i5 = oligo.find(VIR3_ANCHOR_5)
                 i3 = oligo.rfind(VIR3_ANCHOR_3)
                 insert = oligo[i5 + len(VIR3_ANCHOR_5): i3] if (i5 != -1 and i3 != -1 and i3 > i5 + len(VIR3_ANCHOR_5)) else ""
-            if len(insert) < 15:
+            if len(insert) < MIN_VIR3_INSERT_LEN:
                 n_bad += 1
                 continue
             vid = row.get("id", "")

@@ -1,0 +1,7 @@
+{
+  "cov_anchor_5": "GAATTCGGAGCGGT",
+  "cov_anchor_3": "CACTGCACTCGAGA",
+  "vir3_anchor_5": "GGAATTCCGCTGCGT",
+  "vir3_anchor_3": "GAAGAGCTCGA",
+  "min_vir3_insert_len": 15
+}
