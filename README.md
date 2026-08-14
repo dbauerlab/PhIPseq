@@ -14,228 +14,258 @@ Six sequenced batches ("samples") are processed:
   tiles)
 - `TC_5`–`TC_6`: T7 Vir3.2/VirScan3 library (pan-viral peptide tiles)
 
-For each sample, paired-end reads are trimmed to the constant vector
-adapter, aligned against a combined reference built from both libraries'
-designed peptide sets, and counted per peptide. Counts are then aggregated
-into a peptide-by-sample matrix plus QC figures/report (coverage, dropouts,
-evenness, cross-library mapping, batch correlation).
+For each sample, paired-end reads (both sequencing lanes merged first) are
+trimmed to the constant vector adapter and aligned as read pairs against a
+combined reference built from both libraries' designed peptide sets, then
+counted per peptide. Counts are then aggregated into a peptide-by-sample
+matrix plus QC figures/report (coverage, dropouts, evenness, cross-library
+mapping, batch correlation).
 
-As of the current repository state, only the four T7CoV batches (`TC_1`–
-`TC_4`) have been processed through to `results/`; the two T7 Vir3.2 batches
-(`TC_5`, `TC_6`) have not yet been run (confirmed by the absence of
-`results/TC_5*`/`results/TC_6*` in the tree, and by `qc_summary.csv`/
-`summary.md` currently only listing `TC_1`–`TC_3`).
+This pipeline was migrated from a local, macOS-only, single-end-per-mate
+design to a SLURM-scheduled HPC deployment; see
+[slurm_plan.md](slurm_plan.md) for the full design rationale (lane merging,
+paired-end alignment, config consolidation, retired scripts, resource
+requests) behind the current script behavior described below.
 
-This is a set of standalone scripts run locally (no workflow manager, no
-job scheduler) — see [Compute requirements](#compute-requirements).
+**Results in this repository predate the migration.** `results/` currently
+holds output from the old single-end, per-lane pipeline (e.g.
+`R1_counts.tsv`/`R2_counts.tsv`, `count_matrix_R1.csv`/`count_matrix_R2.csv`)
+for `TC_1`–`TC_4` only. That output does not match the current scripts'
+paired-end output shape (`counts.tsv`, `count_matrix.csv` — see
+[Script running order](#script-running-order)) and needs to be regenerated
+from scratch once the real HPC input paths (see
+[Configuration](#configuration)) are filled in and the pipeline is rerun.
 
 ## Repository structure
 
 ```
 PhIPseq/
+├── environment.yml                # conda env spec (Python packages only)
+├── slurm_plan.md                  # SLURM/HPC migration design notes
 ├── scripts/
 │   ├── build_reference.py         # parses source library references -> combined FASTA + metadata
-│   ├── detect_adapters.py         # infers constant adapter sequences -> reference/adapters.json
-│   ├── run_sample.sh              # per-sample: cutadapt -> bowtie2 -> per-peptide counts
-│   ├── run_all.sh                 # drives run_sample.sh for all/selected samples in samples.tsv
-│   ├── wait_and_run.sh            # one-off recovery wrapper around run_all.sh (see script details)
-│   ├── summarize.py               # count matrices + qc_summary.csv + core figures + summary.md
+│   ├── setup_env.sh               # builds/updates the "phipseq" conda env from environment.yml
+│   ├── run_sample.sh              # per-sample: merge lanes -> cutadapt (paired) -> bowtie2 (paired) -> counts
+│   ├── run_all.sh                 # local/dev driver: runs run_sample.sh for all/selected samples in samples.tsv
+│   ├── run_sample.sbatch          # SLURM array job wrapping run_sample.sh, one task per sample
+│   ├── build_index.sbatch         # SLURM job: bowtie2-build the combined index
+│   ├── summarize.sbatch           # SLURM job: summarize.py + the three figure scripts
+│   ├── summarize.py               # count matrix + qc_summary.csv + core figures + summary.md
 │   ├── completeness_figures.py    # coverage / rarefaction / detection-histogram figures
 │   ├── evenness_summary_figure.py # per-sample evenness figure
 │   ├── overview_figure.py         # combined coverage+evenness overview figure, all samples
 │   ├── samples.tsv                # sample sheet: tc_id, library, sample_prefix (all 6 samples)
 │   └── samples_preview.tsv        # same format, subset (TC_1-TC_3) — used for partial/early runs
 ├── reference/
-│   ├── adapters.json              # per-library R1/R2 constant adapter sequences (from detect_adapters.py)
+│   ├── paths.json                 # external file locations (FASTQ dir, source references) -- placeholders
+│   ├── run_params.json            # LANES, BOWTIE_THREADS, CUTADAPT_THREADS
+│   ├── build_reference_params.json# vector anchor sequences, minimum Vir3 insert length
+│   ├── figure_params.json         # OUTLIER_THRESHOLD, LIBRARY_COLORS
+│   ├── hpc_modules.json           # pinned cutadapt/bowtie2/samtools HPC module versions
+│   ├── adapters.json              # per-library R1/R2 constant adapter sequences (hand-maintained)
 │   ├── combined_metadata.csv      # combined peptide metadata (from build_reference.py)
 │   ├── combined_peptides.fasta    # combined peptide FASTA (gitignored; regenerated by build_reference.py)
 │   └── bowtie2_index/             # bowtie2 index built from combined_peptides.fasta (gitignored)
 ├── results/
-│   ├── TC_1..TC_4/                # per-sample cutadapt/bowtie2 logs + R1_counts.tsv/R2_counts.tsv
-│   ├── count_matrix_R1.csv, count_matrix_R2.csv   # peptide x sample count matrices
-│   ├── qc_summary.csv             # per-sample QC metrics table
-│   ├── summary.md                 # markdown QC report (from summarize.py)
-│   ├── figures/                   # PNG figures from summarize.py / completeness_figures.py / etc.
+│   ├── TC_1..TC_4/                # per-sample logs + counts, from the pre-migration pipeline (see note above)
+│   ├── count_matrix_R1.csv, count_matrix_R2.csv   # pre-migration output; superseded by count_matrix.csv
+│   ├── qc_summary.csv             # pre-migration output; schema has since changed (see summarize.py)
+│   ├── summary.md                 # pre-migration markdown QC report
+│   ├── figures/                   # PNG figures from the pre-migration run
 │   ├── coding_plan.md             # human-authored planning notes (project background, design rationale)
-│   └── *.run.log, run_*.log       # captured stdout/stderr from pipeline runs
+│   └── *.run.log, run_*.log       # captured stdout/stderr from pre-migration pipeline runs
 └── .gitignore
 ```
 
 ## Environment & dependencies
 
-No `environment.yml`, `requirements.txt`, `Dockerfile`, or Singularity
-definition is present in the repository. Dependencies below are inferred
-from imports and shell calls in the scripts; no versions are pinned
-anywhere in the repo.
+**Python** — `environment.yml` at the repo root defines a conda env named
+`phipseq` (build/update it with `scripts/setup_env.sh`):
+- `python` (unpinned — always resolves the current stable conda-forge
+  release)
+- `pandas>=2.2`, `numpy>=2.1`, `matplotlib>=3.9`, `scipy>=1.14`,
+  `openpyxl>=3.1` (the last is pandas's `.xlsx` engine for
+  `build_reference.py`)
 
-**Command-line tools** (must be on `PATH`, invoked directly from the shell
-scripts):
-- `cutadapt` — adapter trimming (`run_sample.sh`)
-- `bowtie2` — alignment (`run_sample.sh`); `bowtie2-build` is required to
-  create the index but is not called from any script in this repo (see
-  [Script running order](#script-running-order), step 3 — unresolved/manual)
-- `samtools` — read filtering (`samtools view -F 4`) (`run_sample.sh`)
-- `gzcat` — gzip decompression (macOS-specific; `run_sample.sh` comments
-  note the pipeline is written for macOS, not Linux `zcat`)
+These floors are recommended current-stable versions, not confirmed against
+what the pre-migration `results/` were generated with (no version pins
+existed anywhere in the repo before this migration).
 
-**Python** — scripts expect a project-local virtualenv at `PROJECT_DIR/.venv`
-(referenced explicitly in `run_sample.sh` as `"$PROJECT_DIR/.venv/bin/python"`;
-gitignored, not present in the repo). Third-party packages imported across
-the `.py` scripts:
-- `pandas` — all of `build_reference.py`, `summarize.py`,
-  `completeness_figures.py`, `evenness_summary_figure.py`,
-  `overview_figure.py`
-- `openpyxl` — not imported directly, but required as the engine for
-  `pandas.read_excel()` on the `.xlsx` source reference in
-  `build_reference.py`
-- `numpy` — `summarize.py`, `completeness_figures.py`,
-  `evenness_summary_figure.py`, `overview_figure.py`
-- `matplotlib` (backend forced to `Agg`) — same four scripts as `numpy`
-- `scipy` (`scipy.special.gammaln`) — `completeness_figures.py` only
+**Command-line tools** — provided by the HPC's module system, not conda;
+exact versions are pinned in `reference/hpc_modules.json` and loaded via
+`module load` at the top of every `.sbatch` script:
+- `cutadapt` (`cutadapt/4.2-GCCcore-11.3.0`) — paired-mode adapter trimming
+  (`run_sample.sh`)
+- `bowtie2` (`Bowtie2/2.5.4-GCC-14.2.0`) — paired-end alignment
+  (`run_sample.sh`); `bowtie2-build` (same module) builds the index
+  (`build_index.sbatch`)
+- `samtools` (`SAMtools/1.22.1-GCC-14.2.0`) — read filtering/counting
+  (`run_sample.sh`)
 
-`detect_adapters.py` uses only the standard library (`gzip`, `json`,
-`collections`).
+No `.venv` is used anymore — `run_sample.sh`'s config-loading step needs
+only a `python3` with the standard library `json` module on `PATH` (the
+activated `phipseq` conda env satisfies this).
 
 ## Configuration
 
-- **`scripts/samples.tsv`** — tab-separated sample sheet, columns
-  `tc_id`, `library` (`CoV` or `Vir3`), `sample_prefix`. Drives which
-  samples `run_all.sh` iterates over and which columns appear in the
-  aggregation scripts' outputs. Contains all 6 samples.
-- **`scripts/samples_preview.tsv`** — same schema, restricted to `TC_1`–
-  `TC_3`. Used as an alternate first positional argument to `summarize.py`,
-  `completeness_figures.py`, `evenness_summary_figure.py`, and
-  `overview_figure.py` for producing outputs from a subset of samples
-  (e.g. before a full run has completed). Not read by `run_all.sh`, which
-  always reads `samples.tsv`.
+Paths, tunables, and library-design constants that used to be hardcoded
+Python/shell constants now live in JSON under `reference/`:
+
+- **`reference/paths.json`** — FASTQ directory (`run_sample.sh`) and the two
+  source reference files (`build_reference.py`). **Ships with placeholder
+  values** — the real HPC paths need to be filled in before the pipeline can
+  actually run (see [Overview](#overview)).
+- **`reference/run_params.json`** — `lanes` (`["L007", "L008"]`),
+  `bowtie_threads`, `cutadapt_threads`. (There is no `max_parallel`/retry
+  config — SLURM's own array scheduling and job-failure handling took over
+  both roles; see [slurm_plan.md](slurm_plan.md).)
+- **`reference/build_reference_params.json`** — CoV/Vir3 vector anchor
+  sequences and the minimum Vir3 insert length, consumed by
+  `build_reference.py`.
+- **`reference/figure_params.json`** — `outlier_threshold` and
+  `library_colors`, consumed by `evenness_summary_figure.py` and
+  `overview_figure.py` (deduplicated out of both scripts into one file).
+- **`reference/hpc_modules.json`** — exact `cutadapt`/`bowtie2`/`samtools`
+  module versions; the single source of truth every `.sbatch` script's
+  `module load` line should match.
 - **`reference/adapters.json`** — per-library (`CoV`, `Vir3`) R1/R2 constant
-  adapter sequences, generated by `detect_adapters.py` and consumed by
-  `run_sample.sh` as the `cutadapt -g` adapter argument.
-- **`reference/combined_metadata.csv`** — per-peptide reference table
-  (columns below), generated by `build_reference.py`, consumed by
+  adapter sequences, consumed by `run_sample.sh` as the `cutadapt -g`/`-G`
+  arguments. **Hand-maintained** — there is no script that (re)derives these
+  anymore.
+- **`scripts/samples.tsv`** — tab-separated sample sheet, columns `tc_id`,
+  `library` (`CoV` or `Vir3`), `sample_prefix`. Drives `run_sample.sbatch`'s
+  array-task-to-sample lookup, `run_all.sh`'s local loop, and which columns
+  appear in the aggregation scripts' outputs.
+- **`scripts/samples_preview.tsv`** — same schema, restricted to `TC_1`–
+  `TC_3`. Usable as an alternate first positional argument to
   `summarize.py`, `completeness_figures.py`, `evenness_summary_figure.py`,
-  `overview_figure.py` to map each aligned reference ID back to its source
-  library/organism/protein/position.
-- No YAML/JSON pipeline-wide config or CLI-argument framework (e.g.
-  argparse) is used; per-script tunables are Python module-level constants
-  or shell variables (see each script's "Key parameters" below).
+  and `overview_figure.py` for producing outputs from a subset of samples.
+  Not read by `run_all.sh`/`run_sample.sbatch`, which always use
+  `samples.tsv`.
 
 ## Usage
 
 Run from the repository root (`PROJECT_DIR` in the scripts resolves to the
-parent of `scripts/`, i.e. this directory).
+parent of `scripts/`).
 
-1. **One-off reference/adapter setup** (only needed if `reference/adapters.json`,
-   `reference/combined_metadata.csv`, or the bowtie2 index need to be
-   (re)built):
+1. **Build the conda env** (once, or whenever `environment.yml` changes):
    ```bash
-   .venv/bin/python scripts/detect_adapters.py
-   .venv/bin/python scripts/build_reference.py
-   # then, manually (no script in this repo does this — see note below):
-   bowtie2-build reference/combined_peptides.fasta reference/bowtie2_index/combined
+   bash scripts/setup_env.sh
    ```
-2. **Per-sample trim/align/count**, all samples in `scripts/samples.tsv`,
-   one at a time:
+2. **Fill in real paths** in `reference/paths.json` (FASTQ directory, CoV
+   `.xlsx`/Vir3 `.csv` source files) — these ship as placeholders.
+3. **Build the combined reference**:
    ```bash
-   bash scripts/run_all.sh
+   conda activate phipseq
+   python scripts/build_reference.py
    ```
-   or restrict to specific samples:
+   → `reference/combined_peptides.fasta`, `reference/combined_metadata.csv`
+4. **Build the bowtie2 index**:
    ```bash
-   bash scripts/run_all.sh TC_5 TC_6
+   sbatch scripts/build_index.sbatch
    ```
-3. **Aggregate counts + QC report**:
+   → `reference/bowtie2_index/combined`
+5. **Confirm `reference/adapters.json`** has correct R1/R2 adapters for both
+   libraries (hand-maintained, no script generates it).
+6. **Trim/align/count all samples** (SLURM array job, one task per row of
+   `scripts/samples.tsv`):
    ```bash
-   .venv/bin/python scripts/summarize.py                 # all samples (scripts/samples.tsv)
-   .venv/bin/python scripts/completeness_figures.py
-   .venv/bin/python scripts/evenness_summary_figure.py
-   .venv/bin/python scripts/overview_figure.py
+   sbatch scripts/run_sample.sbatch
    ```
-   Each of the four aggregation scripts accepts an optional first
-   positional argument to point at a different sample sheet (e.g.
-   `scripts/samples_preview.tsv` to (re)generate outputs from a subset of
-   samples before all 6 have been run).
+   For local/dev use without SLURM, `run_all.sh` drives the same
+   `run_sample.sh` sequentially instead (requires `cutadapt`/`bowtie2`/
+   `samtools` on `PATH` and the `phipseq` conda env activated):
+   ```bash
+   bash scripts/run_all.sh            # all samples in samples.tsv
+   bash scripts/run_all.sh TC_5 TC_6  # or restrict to specific samples
+   ```
+7. **Aggregate counts + QC report**, once all samples have finished
+   (submit with a dependency on the array job's job ID):
+   ```bash
+   sbatch --dependency=afterok:<run_sample_job_id> scripts/summarize.sbatch
+   ```
+   which runs, in order: `summarize.py`, `completeness_figures.py`,
+   `evenness_summary_figure.py`, `overview_figure.py` — the latter three
+   accept an optional first positional argument to point at a different
+   sample sheet (e.g. `scripts/samples_preview.tsv`).
 
-Note: raw FASTQ input and the two source library reference files (CoV
-`.xlsx` and VirScan3 `.csv`) live outside this repository on
-lab-internal storage; their exact paths are hardcoded as constants inside
-`detect_adapters.py`, `run_sample.sh`, and `build_reference.py` respectively
-(see those files for the literal paths) rather than reproduced here.
+Raw FASTQ input and the two source library reference files (CoV `.xlsx` and
+VirScan3 `.csv`) live outside this repository on lab-internal storage; their
+paths are configured in `reference/paths.json` (currently placeholders, not
+reproduced here).
 
 ## Script running order
 
 Confirmed from actual code paths (inputs/outputs, `subprocess`/shell calls),
 not from filename order:
 
-1. `detect_adapters.py` and `build_reference.py` — independent of each
-   other; both read only external/hardcoded source files, no dependency
-   between the two.
-2. **Bowtie2 index build — unresolved/external.** No script in this
-   repository invokes `bowtie2-build`. `run_sample.sh` requires
-   `reference/bowtie2_index/combined` to already exist. This step is only
-   described in `results/coding_plan.md` (a human-authored planning note,
-   not executable code) as `bowtie2-build` on
-   `reference/combined_peptides.fasta`. Treat this as a manual/undocumented
-   prerequisite, not a confirmed pipeline step.
-3. `run_all.sh` (or `wait_and_run.sh`, a one-off recovery wrapper — see
-   its script entry) — calls `run_sample.sh` once per sample line in
-   `scripts/samples.tsv`, sequentially (`MAX_PARALLEL=1`).
-4. `run_sample.sh` — per sample, requires `reference/adapters.json` (step 1)
-   and `reference/bowtie2_index/combined` (step 2) to exist.
-5. `summarize.py` — requires `results/<tc_id>/{R1,R2}_counts.tsv` for each
-   sample in its sample sheet (from step 4) and `reference/combined_metadata.csv`
-   (from step 1).
+1. `build_reference.py` — reads only external source files (per
+   `reference/paths.json`); independent of every other step.
+2. `build_index.sbatch` (`bowtie2-build`) — requires
+   `reference/combined_peptides.fasta` from step 1.
+3. `reference/adapters.json` — hand-maintained, no script dependency.
+4. `run_sample.sbatch` (array job) / `run_all.sh` (local) — each task calls
+   `run_sample.sh` once per sample row of `scripts/samples.tsv`; requires
+   `reference/adapters.json` (step 3) and `reference/bowtie2_index/combined`
+   (step 2) to exist. Samples are independent of each other (SLURM's array
+   scheduling runs them unthrottled/concurrently; `run_all.sh` runs them
+   sequentially).
+5. `summarize.py` — requires `results/<tc_id>/counts.tsv`,
+   `results/<tc_id>/cutadapt.log`, `results/<tc_id>/bowtie2.log` for every
+   sample in its sample sheet (from step 4), and
+   `reference/combined_metadata.csv` (from step 1).
 6. `completeness_figures.py`, `evenness_summary_figure.py`,
-   `overview_figure.py` — each requires `results/count_matrix_R1.csv`
-   (written by `summarize.py`, step 5) and `reference/combined_metadata.csv`.
-   These three do not depend on each other and can run in any order.
+   `overview_figure.py` — each requires `results/count_matrix.csv` (written
+   by `summarize.py`, step 5) and `reference/combined_metadata.csv`. These
+   three do not depend on each other and can run in any order (bundled
+   sequentially in `summarize.sbatch` for simplicity).
 
 ## How it fits together / data flow
 
 ```mermaid
 flowchart TD
     subgraph external["External inputs (outside repo)"]
-        RAWFASTQ["Raw FASTQ\n(network share, per sample/lane/mate)"]
-        COVXLSX["CoV Library Reference .xlsx"]
-        VIR3CSV["virscan3 peptide metadata .csv"]
+        RAWFASTQ["Raw FASTQ\n(per sample/lane/mate; path in reference/paths.json)"]
+        COVXLSX["CoV Library Reference .xlsx\n(path in reference/paths.json)"]
+        VIR3CSV["virscan3 peptide metadata .csv\n(path in reference/paths.json)"]
     end
-
-    RAWFASTQ --> DA["detect_adapters.py"]
-    DA --> ADAPTERS["reference/adapters.json"]
 
     COVXLSX --> BR["build_reference.py"]
     VIR3CSV --> BR
     BR --> FASTA["reference/combined_peptides.fasta\n(gitignored)"]
     BR --> META["reference/combined_metadata.csv"]
 
-    FASTA --> BOWTIEBUILD["bowtie2-build\n(UNRESOLVED: no script in repo)"]
+    FASTA --> BOWTIEBUILD["build_index.sbatch\n(bowtie2-build)"]
     BOWTIEBUILD --> INDEX["reference/bowtie2_index/combined\n(gitignored)"]
 
-    SAMPLESTSV["scripts/samples.tsv"] --> RUNALL["run_all.sh / wait_and_run.sh"]
-    RUNALL --> RS["run_sample.sh (per sample)"]
-    ADAPTERS --> RS
+    ADAPTERSJSON["reference/adapters.json\n(hand-maintained)"]
+
+    SAMPLESTSV["scripts/samples.tsv"] --> RUNALL["run_sample.sbatch (array)\n/ run_all.sh (local)"]
+    RUNALL --> RS["run_sample.sh (per sample):\nmerge lanes -> cutadapt (paired)\n-> bowtie2 (paired) -> counts"]
+    ADAPTERSJSON --> RS
     INDEX --> RS
     RAWFASTQ --> RS
-    RS --> COUNTS["results/TC_n/R1_counts.tsv, R2_counts.tsv\n+ cutadapt/bowtie2 logs"]
+    RS --> COUNTS["results/TC_n/counts.tsv\n+ cutadapt.log, bowtie2.log"]
 
     COUNTS --> SUM["summarize.py"]
     META --> SUM
     SAMPLESTSV --> SUM
-    SUM --> MATRICES["results/count_matrix_R1.csv\nresults/count_matrix_R2.csv"]
+    SUM --> MATRIX["results/count_matrix.csv"]
     SUM --> QC["results/qc_summary.csv"]
     SUM --> SUMMD["results/summary.md"]
     SUM --> FIGS1["results/figures/rank_abundance.png\nlorenz_curves.png\nbatch_correlation_<library>.png"]
 
-    MATRICES --> CF["completeness_figures.py"]
+    MATRIX --> CF["completeness_figures.py"]
     META --> CF
     SAMPLESTSV --> CF
     CF --> FIGS2["results/figures/coverage_bar.png\nrarefaction_curves.png\ndetection_histogram.png"]
 
-    MATRICES --> EF["evenness_summary_figure.py"]
+    MATRIX --> EF["evenness_summary_figure.py"]
     META --> EF
     SAMPLESTSV --> EF
     EF --> FIGS3["results/figures/evenness_summary.png"]
 
-    MATRICES --> OF["overview_figure.py"]
+    MATRIX --> OF["overview_figure.py"]
     META --> OF
     SAMPLESTSV --> OF
     OF --> FIGS4["results/figures/overview_all_samples.png"]
@@ -243,36 +273,36 @@ flowchart TD
 
 ## Shared inputs/outputs
 
-- **`reference/adapters.json`** — produced by `detect_adapters.py`;
-  consumed only by `run_sample.sh`.
+- **`reference/adapters.json`** — hand-maintained; consumed only by
+  `run_sample.sh` (paired `cutadapt -g`/`-G` arguments).
 - **`reference/combined_metadata.csv`** — produced by `build_reference.py`;
   consumed by `summarize.py`, `completeness_figures.py`,
-  `evenness_summary_figure.py`, `overview_figure.py` (all four map
-  `ref_id` -> `library`/organism/protein via this file).
+  `evenness_summary_figure.py`, `overview_figure.py` (all four map `ref_id`
+  -> `library`/organism/protein via this file).
 - **`reference/combined_peptides.fasta`** (gitignored) — produced by
-  `build_reference.py`; consumed only by the unresolved/manual
-  `bowtie2-build` step (no script reads it directly).
-- **`reference/bowtie2_index/combined`** (gitignored) — produced by the
-  unresolved/manual `bowtie2-build` step; consumed only by `run_sample.sh`
-  (bowtie2 `-x` argument).
+  `build_reference.py`; consumed only by `build_index.sbatch`
+  (`bowtie2-build`).
+- **`reference/bowtie2_index/combined`** (gitignored) — produced by
+  `build_index.sbatch`; consumed only by `run_sample.sh` (bowtie2 `-x`
+  argument).
 - **`scripts/samples.tsv`** / **`scripts/samples_preview.tsv`** — read by
-  `run_all.sh` (always `samples.tsv`) and by `summarize.py`,
-  `completeness_figures.py`, `evenness_summary_figure.py`,
+  `run_sample.sbatch`/`run_all.sh` (always `samples.tsv`) and by
+  `summarize.py`, `completeness_figures.py`, `evenness_summary_figure.py`,
   `overview_figure.py` (default `samples.tsv`, overridable via first CLI
   argument).
-- **`results/<tc_id>/R1_counts.tsv`, `R2_counts.tsv`** — produced per
-  sample by `run_sample.sh`; consumed only by `summarize.py` (R1 and R2
-  loaded as separate matrices; R1 is the matrix used by all downstream
-  figure scripts).
-- **`results/<tc_id>/cutadapt_*.log`, `bowtie2_*.log`** — produced by
-  `run_sample.sh`; parsed only by `summarize.py` (`parse_cutadapt_log`,
-  `parse_bowtie2_log`) for QC read-count statistics.
-- **`results/count_matrix_R1.csv`** — produced by `summarize.py`; consumed
-  by `completeness_figures.py`, `evenness_summary_figure.py`,
+- **`results/<tc_id>/counts.tsv`** — one paired-end fragment count per
+  peptide, produced per sample by `run_sample.sh`; consumed only by
+  `summarize.py`.
+- **`results/<tc_id>/cutadapt.log`, `bowtie2.log`** — one of each per
+  sample, produced by `run_sample.sh`; parsed only by `summarize.py`
+  (`parse_cutadapt_paired_log`, `parse_bowtie2_paired_log`) for QC
+  read-pair statistics.
+- **`results/count_matrix.csv`** — produced by `summarize.py`; consumed by
+  `completeness_figures.py`, `evenness_summary_figure.py`,
   `overview_figure.py`.
-- **`results/TC_1.run.log`** — produced by `run_all.sh` when launching
-  `TC_1`; polled (via `grep`) by `wait_and_run.sh` to detect completion of
-  a standalone `TC_1` run.
+- **`reference/hpc_modules.json`** — not read by any script; it's the
+  source of truth every `.sbatch` script's `module load` line is kept in
+  sync with by hand.
 
 ## Reference data
 
@@ -282,15 +312,15 @@ sequences from two source libraries, external to this repo:
 
 - **T7CoV library** ("CoV" in `library` columns) — SARS-CoV-2 and related
   coronavirus peptide tiles (56mers), sourced from an external
-  `CoV Library Reference.xlsx` (path hardcoded in `build_reference.py`,
-  not reproduced here). Per-clone barcode ID used as `source_id`; a
+  `CoV Library Reference.xlsx` (path configured in `reference/paths.json`,
+  currently a placeholder). Per-clone barcode ID used as `source_id`; a
   separate `parent_peptide_id` groups synonymous barcode replicates
   (`BC1`/`BC2`/...).
 - **T7 Vir3.2 / VirScan3 library** ("Vir3" in `library` columns) — pan-viral
   peptide tiles, sourced from an external `virscan3.peptide.metadata.csv`
-  (path hardcoded in `build_reference.py`, not reproduced here), combining
-  three source provenances present in that file (`Vir2`, `Vir3`, `IEDB`)
-  that share one physical synthesized oligo pool.
+  (path configured in `reference/paths.json`, currently a placeholder),
+  combining three source provenances present in that file (`Vir2`, `Vir3`,
+  `IEDB`) that share one physical synthesized oligo pool.
 - No genome build, gene annotation version, or external sequence database
   (e.g. RefSeq/UniProt release) is referenced anywhere in the scripts;
   `organism`/`protein_name` fields in `reference/combined_metadata.csv` are
@@ -302,28 +332,19 @@ sequences from two source libraries, external to this repo:
 
 ## Compute requirements
 
-No SLURM/PBS or other job-scheduler headers are present anywhere in the
-repository — all scripts are plain bash/Python intended to run on a local
-machine (comments in `run_sample.sh`/`run_all.sh` explicitly reference
-macOS, `gzcat`, and a Dropbox-synced project directory over an SMB-mounted
-data share).
+SLURM-scheduled (see `scripts/*.sbatch`); resource requests agreed as part
+of the migration (see [slurm_plan.md](slurm_plan.md) for the reasoning):
 
-Confirmed from code:
-- `run_sample.sh` uses `bowtie2 -p 4` and `cutadapt -j 2` per mate (R1/R2
-  processed sequentially per sample), i.e. up to ~6 threads at peak per
-  sample, per the script's own header comment.
-- `run_all.sh` sets `MAX_PARALLEL=1` — samples are processed strictly one
-  at a time, not in parallel, because (per its comment) the SMB network
-  share used for FASTQ input errors under concurrent read streams.
-- `run_sample.sh` retries each lane/mate up to 5 times with a 20s backoff
-  on failure (transient SMB read errors), and writes large intermediate
-  hit-list files to a local `/tmp` path rather than the (Dropbox-synced)
-  project directory.
+| Job | CPUs | Memory | Wall-clock | Notes |
+|---|---|---|---|---|
+| `run_sample.sbatch` | 4 | 32G | 7 days | Array job, `--array=1-6`, unthrottled (no `%N` — SLURM schedules all 6 tasks concurrently if resources allow). 7-day wall-clock requested flat since it has negligible queue-time impact on this cluster; `bowtie2 -p4`/`cutadapt -j2` run sequentially within a sample (trim, then align), so 4 CPUs covers the peak. |
+| `build_index.sbatch` | 4 | 8G | 1 hour | One-off; `bowtie2-build` on the combined FASTA. |
+| `summarize.sbatch` | 1 | 8G | 2 hours | Single-core matplotlib figure generation over an already-aggregated matrix; no alignment/trimming. |
 
-Not confirmed from code (context only, from `results/coding_plan.md`, a
-human-authored planning note): the full run across all 6 samples was
-anticipated to be a large (~70GB of raw data), long-running background job,
-tested first on a truncated read subsample per sample.
+No per-lane retry loop exists anymore (the pre-migration script retried
+each lane 5 times / 20s backoff specifically to work around a macOS/SMB
+`close()`/EBADF bug); a failed array task now surfaces as a nonzero exit in
+`sacct`/`seff` and can be resubmitted individually or via `--requeue`.
 
 ## Individual script details
 
@@ -331,18 +352,20 @@ tested first on a truncated read subsample per sample.
 - Purpose: parse the two source phage-display library reference files and
   emit one combined peptide FASTA + one combined metadata CSV with
   namespaced IDs.
-- Inputs: `CoV Library Reference.xlsx` (external, path hardcoded, not
-  reproduced here) — `Nucleotide sequence`, `Barcode ID`, `Peptide ID`,
-  `Organsim` [sic], `Protein name`, `Peptide sequence`, `Start position`,
-  `End position` columns; `virscan3.peptide.metadata.csv` (external, path
-  hardcoded, not reproduced here) — `oligo`, `source`, `id`, `Organism`,
-  `Protein.names`, `peptide`, `start`, `end` columns.
+- Inputs: `CoV Library Reference.xlsx` (path from `reference/paths.json`,
+  currently a placeholder) — `Nucleotide sequence`, `Barcode ID`,
+  `Peptide ID`, `Organsim` [sic], `Protein name`, `Peptide sequence`,
+  `Start position`, `End position` columns; `virscan3.peptide.metadata.csv`
+  (path from `reference/paths.json`, currently a placeholder) — `oligo`,
+  `source`, `id`, `Organism`, `Protein.names`, `peptide`, `start`, `end`
+  columns. Vector anchor sequences and the minimum Vir3 insert length come
+  from `reference/build_reference_params.json`.
 - Outputs: `reference/combined_peptides.fasta` (gitignored; downstream
-  consumer: the unresolved/manual `bowtie2-build` step only — see
-  [Script running order](#script-running-order)); `reference/combined_metadata.csv`
+  consumer: `build_index.sbatch`'s `bowtie2-build` only); `reference/combined_metadata.csv`
   (downstream consumers: `summarize.py`, `completeness_figures.py`,
   `evenness_summary_figure.py`, `overview_figure.py`).
 - Key steps:
+  - Load `reference/paths.json` and `reference/build_reference_params.json`.
   - Load the CoV `.xlsx` via `pandas.read_excel`.
   - For each CoV row, locate the fixed 5'/3' vector anchors in the
     nucleotide sequence and extract the peptide-coding insert between them.
@@ -352,94 +375,75 @@ tested first on a truncated read subsample per sample.
   - For `source == "Vir2"` rows, extract the insert as the longest
     lowercase run in the (mixed-case-masked) oligo; for `Vir3`/`IEDB` rows,
     extract via fixed 5'/3' anchors (uppercase-only masking convention).
-  - Skip Vir3 rows with an insert shorter than 15nt; collapse exact-duplicate
-    rows sharing an `id`; disambiguate non-exact `id` collisions with a
-    `.dupN` suffix.
+  - Skip Vir3 rows with an insert shorter than `min_vir3_insert_len`;
+    collapse exact-duplicate rows sharing an `id`; disambiguate non-exact
+    `id` collisions with a `.dupN` suffix.
   - Concatenate CoV + Vir3 records, de-duplicate by final `ref_id`
     (`CoV|<id>` / `Vir3|<id>`), and write one FASTA record and one metadata
     row per unique `ref_id`.
   - Log parse/skip/duplicate counts to stderr.
-- Key parameters: no CLI arguments; all tunables are module-level
-  constants — `COV_ANCHOR_5`/`COV_ANCHOR_3` (CoV vector anchor sequences),
-  `VIR3_ANCHOR_5`/`VIR3_ANCHOR_3` (Vir3 vector anchor sequences), source
-  file paths, output paths.
-- Dependencies: `pandas` (+ `openpyxl` engine for `.xlsx`), `csv`, `re`,
-  `sys`, `pathlib` (stdlib).
+- Key parameters: no CLI arguments; source paths and vector-anchor/min-insert
+  constants come from `reference/paths.json` and
+  `reference/build_reference_params.json` (see
+  [Configuration](#configuration)).
+- Dependencies: `pandas` (+ `openpyxl` engine for `.xlsx`), `csv`, `json`,
+  `re`, `sys`, `pathlib` (stdlib).
 
-### detect_adapters.py
-- Purpose: empirically determine the constant 5' vector adapter sequence
-  for R1 and R2 of each library, by consensus base-calling over many reads
-  of one representative sample per library.
-- Inputs: raw FASTQ for one hardcoded representative sample per library
-  (`REPRESENTATIVE_SAMPLES` dict), read from a network share (path
-  hardcoded, not reproduced here; external to this repo).
-- Outputs: `reference/adapters.json` (downstream consumer: `run_sample.sh`,
-  as the `cutadapt -g` adapter for each library/mate).
+### setup_env.sh
+- Purpose: build or update the `phipseq` conda environment from
+  `environment.yml`.
+- Inputs: `environment.yml` (repo root).
+- Outputs: the `phipseq` conda environment (not tracked in the repo).
 - Key steps:
-  - For each library's representative sample and each mate (R1, R2):
-    read up to `N_READS` reads' sequence lines from the gzipped FASTQ.
-  - Tally per-position base counts (`Counter`) across those reads, up to
-    `WIDTH` positions.
-  - At each position, take the most common base and its consensus
-    fraction.
-  - Find the first position where the consensus fraction drops below
-    `DROP_THRESHOLD`; the adapter is the consensus bases up to that
-    boundary (interpreted as the constant-adapter/variable-insert
-    junction).
-  - Print each detected adapter (library, mate, length, sequence) to
-    stdout.
-  - Write all four adapters (`CoV`/`Vir3` x `R1`/`R2`) to
-    `reference/adapters.json`.
-- Key parameters: `REPRESENTATIVE_SAMPLES` (hardcoded sample name per
-  library, no CLI override); `N_READS = 5000` (reads sampled per
-  mate); `WIDTH = 70` (max positions scanned); `DROP_THRESHOLD = 0.8`
-  (consensus fraction below which a position is treated as past the
-  adapter boundary).
-- Dependencies: `gzip`, `json`, `collections`, `pathlib` (stdlib only).
+  - `conda env create -f environment.yml -n phipseq`, falling back to
+    `conda env update` if the env already exists.
+- Key parameters: none (no CLI arguments).
+- Dependencies: `conda`.
 
 ### run_sample.sh
-- Purpose: trim, align, and count one sample's reads (both lanes, both
-  mates) against the combined bowtie2 index, streaming
-  cutadapt -> bowtie2 -> samtools with no intermediate files written to the
-  project directory.
-- Inputs: raw FASTQ for the given `sample_prefix`, both lanes
-  (`L007`, `L008`), both mates (R1, R2), from a network share (path
-  hardcoded, not reproduced here); `reference/adapters.json` (from
-  `detect_adapters.py`); `reference/bowtie2_index/combined` (from the
-  unresolved/manual `bowtie2-build` step).
-- Outputs: `results/<tc_id>/R1_counts.tsv`, `R2_counts.tsv` (ref_id →
-  read count, tab-separated; downstream consumer: `summarize.py`);
-  `results/<tc_id>/cutadapt_{R1,R2}_{L007,L008}.log`,
-  `bowtie2_{R1,R2}_{L007,L008}.log` (downstream consumer: `summarize.py`'s
-  QC read-count parsing).
+- Purpose: trim, align, and count one sample's paired-end reads (both
+  lanes merged first, both mates trimmed/aligned together) against the
+  combined bowtie2 index.
+- Inputs: raw FASTQ for the given `sample_prefix`, both lanes, both mates
+  (path from `reference/paths.json`); `reference/adapters.json`;
+  `reference/bowtie2_index/combined` (from `build_index.sbatch`);
+  `reference/run_params.json` (lanes, thread counts).
+- Outputs: `results/<tc_id>/counts.tsv` (one row per detected `ref_id`,
+  tab-separated ref_id/count; downstream consumer: `summarize.py`);
+  `results/<tc_id>/cutadapt.log`, `bowtie2.log` (downstream consumer:
+  `summarize.py`'s QC parsing).
 - Key steps:
-  - Look up the R1/R2 adapter for the given `library` from
-    `reference/adapters.json` via an inline Python one-liner.
-  - For each mate (R1 then R2) and each lane:
-    - Stream-decompress the FASTQ (`cat | gzcat`, to work around an SMB
-      close()/EBADF issue noted in comments), optionally truncated to the
-      first `subsample_reads` reads via `head`.
-    - Pipe through `cutadapt -g <adapter> --discard-untrimmed` (R1 uses
-      `bowtie2 --norc`, forward-strand only; R2 uses `--nofw`,
-      reverse-strand only) then `bowtie2 -x <index>` then
-      `samtools view -F 4 | cut -f3` to get one reference ID per aligned
-      read.
-    - Retry the whole lane pipeline up to 5 times (20s backoff) on
-      failure; exit non-zero after 5 failed attempts.
-  - After both lanes for a mate are done, concatenate their per-read
-    reference-ID hit lists, `sort | uniq -c`, and write as
-    `<mate>_counts.tsv`; remove the temporary per-lane hit-list files.
+  - Create a fresh `mktemp -d` temp directory (honors `$TMPDIR` if set),
+    cleaned up via `trap ... EXIT`.
+  - Load `FASTQ_DIR`, thread counts, `LANES`, and the library's R1/R2
+    adapters from `reference/paths.json`, `reference/run_params.json`, and
+    `reference/adapters.json` via one inline Python call.
+  - Merge each mate's lanes into one file (`cat`-concatenating the raw
+    `.gz` lane files, or `zcat | head | gzip` when subsampling) — a
+    concatenated `.gz` is a valid multi-member gzip stream, so no
+    decompress/recompress round-trip is needed for full-data runs.
+  - Trim R1 and R2 together with one paired-mode `cutadapt` call
+    (`-g`/`-G`, `--discard-untrimmed`), writing trimmed output to temp
+    FASTQ files (`-o`/`-p`) rather than stdout, since paired `bowtie2`
+    needs two separate, complete inputs.
+  - Align the merged, trimmed mates jointly with paired-mode `bowtie2`
+    (`-1`/`-2`, default `--fr` orientation, `--no-unal`).
+  - Filter the resulting BAM to one record per aligned pair
+    (`samtools view -F 4 -f 64`, first-in-pair) before extracting the
+    reference ID (`cut -f3`) and counting (`sort | uniq -c`).
 - Key parameters: positional args `tc_id`, `library` (`CoV`|`Vir3`),
-  `sample_prefix`, optional `subsample_reads` (default `0` = full data;
-  if >0, only the first N reads per lane/mate are processed, intended for
-  a quick sanity check); `LANES=(L007 L008)` (hardcoded); `BOWTIE_THREADS=4`;
-  `CUTADAPT_THREADS=2`.
-- Dependencies: `cutadapt`, `bowtie2`, `samtools`, `gzcat` (macOS), plus a
-  project-local `.venv` Python for the adapter JSON lookup.
+  `sample_prefix`, optional `subsample_reads` (default `0` = full data; if
+  >0, only the first N read pairs from the merged lanes are processed).
+  `LANES`, `BOWTIE_THREADS`, `CUTADAPT_THREADS` come from
+  `reference/run_params.json`.
+- Dependencies: `cutadapt`, `bowtie2`, `samtools`, `zcat` (all via HPC
+  modules pinned in `reference/hpc_modules.json`), plus a `python3` on
+  `PATH` for the JSON config-loading step (the activated `phipseq` conda
+  env satisfies this).
 
 ### run_all.sh
-- Purpose: orchestrate `run_sample.sh` across the sample sheet, one sample
-  at a time (or in fixed-size parallel batches, per `MAX_PARALLEL`).
+- Purpose: local/dev driver — orchestrate `run_sample.sh` across the sample
+  sheet without SLURM, one sample at a time.
 - Inputs: `scripts/samples.tsv` (columns `tc_id`, `library`,
   `sample_prefix`); optional CLI args restricting which `tc_id`s to run.
 - Outputs: `results/<tc_id>.run.log` per launched sample (captured
@@ -449,63 +453,75 @@ tested first on a truncated read subsample per sample.
   - Resolve the project directory relative to this script's own location.
   - Read `scripts/samples.tsv`, skipping the header row.
   - For each sample row, skip it unless it matches an optional CLI
-    allow-list (`matches_want`); if no CLI args given, run all samples.
+    allow-list; if no CLI args given, run all samples.
   - Launch `run_sample.sh <tc_id> <library> <sample_prefix>` in the
     background, redirecting output to `results/<tc_id>.run.log`.
   - Batch launches in groups of `MAX_PARALLEL`, `wait`-ing for each batch
-    before starting the next (comment: avoids relying on bash 4's
-    `wait -n`, for macOS/bash 3.2 compatibility).
-- Key parameters: `MAX_PARALLEL=1` (hardcoded; sequential execution only,
-  because the SMB-mounted FASTQ share errors under concurrent reads, per
-  comment); positional CLI args = optional `tc_id` allow-list (default:
-  all samples in `samples.tsv`).
+    before starting the next.
+- Key parameters: `MAX_PARALLEL=1` (hardcoded; a holdover from the
+  pre-migration SMB-mount concurrency limit — harmless for local/dev use,
+  but not the concurrency mechanism used on the cluster, where
+  `run_sample.sbatch`'s unthrottled array job is used instead); positional
+  CLI args = optional `tc_id` allow-list (default: all samples in
+  `samples.tsv`).
 - Dependencies: bash only; calls `run_sample.sh`.
 
-### wait_and_run.sh
-- Purpose: one-off recovery wrapper — waits for a standalone `TC_1` run
-  (started outside `run_all.sh`, per its header comment, "orphaned from an
-  earlier driver bug") to finish, then runs the remaining samples strictly
-  sequentially via `run_all.sh`.
-- Inputs: `results/TC_1.run.log` (polled for a `"[TC_1] done."` marker
-  line, which `run_sample.sh` prints on success).
-- Outputs: none directly; triggers `run_all.sh TC_2 TC_3 TC_4 TC_5 TC_6`,
-  which produces the same outputs as any other `run_all.sh` invocation.
+### run_sample.sbatch
+- Purpose: SLURM array job wrapping `run_sample.sh` — the cluster-native
+  replacement for `run_all.sh`'s orchestration role.
+- Inputs: `scripts/samples.tsv` (row looked up via `SLURM_ARRAY_TASK_ID`);
+  `reference/hpc_modules.json` (module versions, hardcoded in the header to
+  match).
+- Outputs: `results/run_sample_<jobid>_<taskid>.slurm.log` (SLURM's own
+  stdout capture); indirectly, everything `run_sample.sh` produces.
 - Key steps:
-  - Poll `results/TC_1.run.log` every 30s for the `"[TC_1] done."` marker.
-  - If a matching `run_sample.sh TC_1` process is no longer running but
-    the marker is absent, warn (possible crash) and stop polling.
-  - Once `TC_1` is confirmed done, invoke
-    `run_all.sh TC_2 TC_3 TC_4 TC_5 TC_6`.
-- Key parameters: none (no CLI args; sample list `TC_2`..`TC_6` is
-  hardcoded).
-- Dependencies: bash only (`grep`, `pgrep`); calls `run_all.sh`. This
-  script encodes a specific historical recovery scenario (an already-running,
-  externally-launched `TC_1` job) rather than a general-purpose entry
-  point — `run_all.sh` alone is sufficient for a normal run.
+  - `module load` the pinned `cutadapt`/`bowtie2`/`samtools` versions.
+  - Activate the `phipseq` conda env.
+  - Look up this task's sample row (`SLURM_ARRAY_TASK_ID + 1`th line of
+    `samples.tsv`, skipping the header).
+  - Call `run_sample.sh <tc_id> <library> <sample_prefix>`.
+- Key parameters: `--array=1-6` (unthrottled, no `%N`); `--cpus-per-task=4`,
+  `--mem=32G`, `--time=7-00:00:00` (see [Compute
+  requirements](#compute-requirements)).
+- Dependencies: SLURM; `run_sample.sh`; the `phipseq` conda env.
+
+### build_index.sbatch
+- Purpose: build the combined bowtie2 index — a step no script performed
+  before this migration (it was a manual/undocumented prerequisite).
+- Inputs: `reference/combined_peptides.fasta` (from `build_reference.py`).
+- Outputs: `reference/bowtie2_index/combined` (downstream consumer:
+  `run_sample.sh`).
+- Key steps:
+  - `module load` the pinned `bowtie2` version.
+  - `bowtie2-build --threads $SLURM_CPUS_PER_TASK` on the combined FASTA.
+- Key parameters: `--cpus-per-task=4`, `--mem=8G`, `--time=01:00:00`.
+- Dependencies: SLURM; `bowtie2-build`.
 
 ### summarize.py
-- Purpose: aggregate per-sample per-peptide counts into count matrices and
+- Purpose: aggregate per-sample per-peptide counts into a count matrix and
   produce the core QC report (coverage, dropouts, evenness, cross-library
   mapping, batch reproducibility) as CSVs, PNG figures, and a markdown
   summary.
 - Inputs: `scripts/samples.tsv` (or path given as first CLI arg, e.g.
   `samples_preview.tsv`); `reference/combined_metadata.csv` (from
-  `build_reference.py`); `results/<tc_id>/{R1,R2}_counts.tsv` and
-  `results/<tc_id>/{cutadapt,bowtie2}_{R1,R2}_{L007,L008}.log` per sample
-  (from `run_sample.sh`).
-- Outputs: `results/count_matrix_R1.csv`, `results/count_matrix_R2.csv`
-  (downstream consumers: `completeness_figures.py`,
-  `evenness_summary_figure.py`, `overview_figure.py` — R1 matrix only);
-  `results/qc_summary.csv`; `results/figures/rank_abundance.png`,
-  `lorenz_curves.png`, `batch_correlation_<library>.png` (one per
-  library); `results/summary.md`.
+  `build_reference.py`); `results/<tc_id>/counts.tsv` and
+  `results/<tc_id>/cutadapt.log`/`bowtie2.log` per sample (from
+  `run_sample.sh`).
+- Outputs: `results/count_matrix.csv` (downstream consumers:
+  `completeness_figures.py`, `evenness_summary_figure.py`,
+  `overview_figure.py`); `results/qc_summary.csv`;
+  `results/figures/rank_abundance.png`, `lorenz_curves.png`,
+  `batch_correlation_<library>.png` (one per library);
+  `results/summary.md`.
 - Key steps:
   - Load the sample sheet and reference metadata.
-  - Build an R1 and an R2 peptide x sample count matrix from each sample's
-    counts TSVs (missing entries filled with 0).
-  - Parse cutadapt/bowtie2 logs per sample/mate/lane to compute raw read
-    count, trim rate, mapping rate, multimapping rate (summed across
-    lanes).
+  - Build one peptide x sample count matrix from each sample's
+    `counts.tsv` (missing entries filled with 0) — one count per aligned
+    read pair (see `run_sample.sh`'s counting logic).
+  - Parse each sample's single `cutadapt.log`/`bowtie2.log` (paired-mode
+    summaries — no more per-lane/per-mate summation) to compute raw read
+    pairs, trim rate, concordant-pair map rate, concordant multimap rate,
+    and bowtie2's reported overall alignment rate.
   - For each sample: compute reads mapping to its own vs. the other
     library's references (contamination/mislabelling check), designed
     library size, number/percent of peptides detected, dropout count,
@@ -516,13 +532,13 @@ tested first on a truncated read subsample per sample.
     peptides only).
   - Plot Lorenz curves (evenness) per sample against the line of perfect
     evenness.
-  - Per library, plot a Pearson-correlation heatmap of log1p(R1 counts)
-    across that library's samples (batch reproducibility).
+  - Per library, plot a Pearson-correlation heatmap of log1p(counts) across
+    that library's samples (batch reproducibility).
   - Assemble `summary.md`: the QC table plus embedded links to the three
     figure sets above.
 - Key parameters: optional CLI arg = path to sample sheet (default
-  `scripts/samples.tsv`); `LANES = ["L007", "L008"]` (hardcoded, must match
-  `run_sample.sh`'s lane list).
+  `scripts/samples.tsv`). (No more `LANES` constant — lanes are already
+  merged upstream in `run_sample.sh`.)
 - Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg` backend).
 
 ### completeness_figures.py
@@ -530,15 +546,14 @@ tested first on a truncated read subsample per sample.
   sequencing-depth rarefaction, per-peptide detection histogram)
   complementing `summarize.py`'s rank-abundance/Lorenz plots.
 - Inputs: `scripts/samples.tsv` (or path given as first CLI arg);
-  `reference/combined_metadata.csv`; `results/count_matrix_R1.csv` (from
+  `reference/combined_metadata.csv`; `results/count_matrix.csv` (from
   `summarize.py`).
 - Outputs: `results/figures/coverage_bar.png`, `rarefaction_curves.png`,
   `detection_histogram.png`. No script reads these three PNGs downstream
-  (terminal outputs, for human review / `results/summary.md` is not
-  updated to embed them — confirmed: `summarize.py` only embeds its own
-  three figures).
+  (terminal outputs, for human review — `results/summary.md` only embeds
+  `summarize.py`'s own three figures).
 - Key steps:
-  - Load sample sheet, reference metadata, and the R1 count matrix.
+  - Load sample sheet, reference metadata, and the count matrix.
   - Coverage bar chart: for each sample, % of its own designed library
     detected (>=1 read), annotated with `detected/total` counts.
   - Rarefaction curves: for each sample, compute the exact expected number
@@ -551,7 +566,7 @@ tested first on a truncated read subsample per sample.
     counts among detected peptides.
 - Key parameters: optional CLI arg = path to sample sheet (default
   `scripts/samples.tsv`); no other tunables exposed (rarefaction depth
-  range is computed from each sample's own total read count).
+  range is computed from each sample's own total read-pair count).
 - Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg`), `scipy.special.gammaln`.
 
 ### evenness_summary_figure.py
@@ -559,21 +574,23 @@ tested first on a truncated read subsample per sample.
   percentile "typical range" of per-peptide counts, median, and explicit
   near-dropout outliers).
 - Inputs: `scripts/samples.tsv` (or path given as first CLI arg);
-  `reference/combined_metadata.csv`; `results/count_matrix_R1.csv`.
+  `reference/combined_metadata.csv`; `results/count_matrix.csv`;
+  `reference/figure_params.json` (`outlier_threshold`).
 - Outputs: `results/figures/evenness_summary.png` (terminal output; not
   embedded in `results/summary.md`).
 - Key steps:
-  - Load sample sheet, reference metadata, and the R1 count matrix.
+  - Load sample sheet, reference metadata, count matrix, and
+    `reference/figure_params.json`.
   - For each sample, restrict to its own library's detected peptides.
   - Plot the P10-P90 range as a vertical bar and the median as a marker,
     on a log-scaled y-axis.
-  - Mark peptides at or below `OUTLIER_THRESHOLD` reads as individual
+  - Mark peptides at or below `outlier_threshold` reads as individual
     "near-dropout" markers rather than folding them into a min/max ratio.
   - Label each sample's x-tick with counts of near-dropout and fully
     missing (zero-read) peptides.
 - Key parameters: optional CLI arg = path to sample sheet (default
-  `scripts/samples.tsv`); `OUTLIER_THRESHOLD = 10` (reads; peptides at or
-  below this are called out individually).
+  `scripts/samples.tsv`); `outlier_threshold` (default `10` reads, from
+  `reference/figure_params.json`).
 - Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg`).
 
 ### overview_figure.py
@@ -583,19 +600,22 @@ tested first on a truncated read subsample per sample.
 - Inputs: `scripts/samples.tsv` (or path given as first CLI arg, intended
   to be run with the full sample sheet once all 6 samples are processed,
   per the script's own module docstring); `reference/combined_metadata.csv`;
-  `results/count_matrix_R1.csv`.
+  `results/count_matrix.csv`; `reference/figure_params.json`
+  (`outlier_threshold`, `library_colors`).
 - Outputs: `results/figures/overview_all_samples.png` (terminal output;
   not embedded in `results/summary.md`).
 - Key steps:
-  - Load sample sheet, reference metadata, and the R1 count matrix.
+  - Load sample sheet, reference metadata, count matrix, and
+    `reference/figure_params.json`.
   - For each sample: compute % of own-library peptides detected and plot
     as a bar (left panel), colored by library.
   - For each sample: compute the P10-P90 typical range + median of
     detected-peptide counts and plot (right panel), colored by library,
-    marking near-dropout outliers (`OUTLIER_THRESHOLD`).
+    marking near-dropout outliers (`outlier_threshold`).
   - Annotate x-tick labels with near-dropout/missing counts per sample.
 - Key parameters: optional CLI arg = path to sample sheet (default
-  `scripts/samples.tsv`); `OUTLIER_THRESHOLD = 10` (reads);
-  `LIBRARY_COLORS = {"CoV": "tab:blue", "Vir3": "tab:orange"}` (colors for
-  any other library value fall back to gray).
+  `scripts/samples.tsv`); `outlier_threshold` (default `10` reads),
+  `library_colors` (default `{"CoV": "tab:blue", "Vir3": "tab:orange"}`,
+  any other library value falls back to gray) — both from
+  `reference/figure_params.json`.
 - Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg`).
