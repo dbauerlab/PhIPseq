@@ -4,9 +4,15 @@
 # matrix, no alignment/trimming -- resourced much smaller than
 # run_sample.sbatch.
 #
-# Submit with a dependency on the run_sample.sbatch array job, so it only
-# starts once every sample has finished:
+# Submit with (PHIPSEQ_REPO_DIR is required -- see below):
+#   export PHIPSEQ_REPO_DIR=/path/to/PhIPseq   # once per shell session
 #   sbatch --dependency=afterok:<run_sample_array_job_id> scripts/summarize.sbatch
+#
+# PHIPSEQ_REPO_DIR is required -- SLURM copies a submitted script into a
+# per-job spool directory on the compute node (e.g. /tmp/slurmd/...) and
+# runs *that* copy, so the script's own location (${BASH_SOURCE[0]}) can't
+# be used to find the repo checkout the way a plain bash script normally
+# would.
 #
 # SLURM's own default output naming applies (no static --output directive
 # here, since results/ now lives in run_dir -- configured in
@@ -20,7 +26,7 @@
 #SBATCH --time=02:00:00
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="${PHIPSEQ_REPO_DIR:?Set PHIPSEQ_REPO_DIR to the repo checkout path before submitting (see header comment above)}"
 
 eval "$(conda shell.bash hook)"
 conda activate phipseq

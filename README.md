@@ -170,6 +170,17 @@ directories.
 Run from the repository root (`PROJECT_DIR` in the scripts resolves to the
 parent of `scripts/`).
 
+**Before submitting any `.sbatch` script**, export `PHIPSEQ_REPO_DIR` to
+the repo checkout's path, once per shell session:
+```bash
+export PHIPSEQ_REPO_DIR=/path/to/PhIPseq
+```
+This is required — SLURM copies a submitted script into a per-job spool
+directory on the compute node and runs *that* copy, so a script can't find
+its own repo checkout via its own file location (`${BASH_SOURCE[0]}`) the
+way a plain bash script normally would. All three `.sbatch` scripts fail
+fast with a clear error if `PHIPSEQ_REPO_DIR` is unset.
+
 1. **Build the conda env** (once, or whenever `environment.yml` changes):
    ```bash
    bash scripts/setup_env.sh
@@ -200,7 +211,9 @@ parent of `scripts/`).
    For local/dev use without SLURM, `run_sample.sh` can be invoked directly
    per sample instead (requires `cutadapt`/`bowtie2`/`samtools` on `PATH`
    and the `phipseq` conda env activated) — there is no batch driver for
-   this anymore, so each sample needs its own invocation:
+   this anymore, so each sample needs its own invocation. This does *not*
+   need `PHIPSEQ_REPO_DIR` set, since it's plain bash execution, not a
+   SLURM submission — `run_sample.sh` resolves its own location normally:
    ```bash
    bash scripts/run_sample.sh TC_1 CoV CAY9116A7_S70
    ```
@@ -518,11 +531,16 @@ override it at submission time.
   single sample, see [Usage](#usage)).
 - Inputs: `scripts/samples.tsv` (row looked up via `SLURM_ARRAY_TASK_ID`);
   `reference/hpc_modules.json` (module versions, hardcoded in the header to
-  match).
+  match); the `PHIPSEQ_REPO_DIR` environment variable (see below).
 - Outputs: SLURM's own default job-log capture (no static `--output`
   directive — see [Usage](#usage)); indirectly, everything `run_sample.sh`
   produces (in `<run_dir>/results/<tc_id>/`).
 - Key steps:
+  - Resolve `PROJECT_DIR` from the required `PHIPSEQ_REPO_DIR` environment
+    variable (`${BASH_SOURCE[0]}` can't be used here — SLURM executes a
+    copy of the submitted script from a per-job spool directory, not the
+    original file, so the script's own location doesn't point back to the
+    repo).
   - `module load` the pinned `cutadapt`/`bowtie2`/`samtools` versions.
   - Activate the `phipseq` conda env.
   - Look up this task's sample row (`SLURM_ARRAY_TASK_ID + 1`th line of
@@ -530,7 +548,8 @@ override it at submission time.
   - Call `run_sample.sh <tc_id> <library> <sample_prefix>`.
 - Key parameters: `--array=1-6` (unthrottled, no `%N`); `--cpus-per-task=4`,
   `--mem=32G`, `--time=7-00:00:00` (see [Compute
-  requirements](#compute-requirements)).
+  requirements](#compute-requirements)); `PHIPSEQ_REPO_DIR` (required
+  environment variable, not an `#SBATCH` option — see [Usage](#usage)).
 - Dependencies: SLURM; `run_sample.sh`; the `phipseq` conda env.
 
 ### build_index.sbatch
@@ -539,15 +558,21 @@ override it at submission time.
 - Inputs: `<run_dir>/reference/combined_peptides.fasta` (from
   `build_reference.py`); `run_dir` resolved from `reference/paths.json` via
   a `python3 -c` one-liner (this script has no other Python dependency, so
-  it doesn't need the `phipseq` conda env active).
+  it doesn't need the `phipseq` conda env active); the `PHIPSEQ_REPO_DIR`
+  environment variable (see below).
 - Outputs: `<run_dir>/reference/bowtie2_index/combined` (downstream
   consumer: `run_sample.sh`).
 - Key steps:
-  - Resolve `RUN_DIR` from `reference/paths.json`.
+  - Resolve `PROJECT_DIR` from the required `PHIPSEQ_REPO_DIR` environment
+    variable (same reason as `run_sample.sbatch` — SLURM runs a spooled
+    copy of the submitted script, not the original file).
+  - Resolve `RUN_DIR` from `reference/paths.json` (found via `PROJECT_DIR`).
   - `module load` the pinned `bowtie2` version.
   - `mkdir -p` the index directory under `RUN_DIR`, then
     `bowtie2-build --threads $SLURM_CPUS_PER_TASK` on the combined FASTA.
-- Key parameters: `--cpus-per-task=4`, `--mem=8G`, `--time=01:00:00`.
+- Key parameters: `--cpus-per-task=4`, `--mem=8G`, `--time=01:00:00`;
+  `PHIPSEQ_REPO_DIR` (required environment variable, not an `#SBATCH`
+  option — see [Usage](#usage)).
 - Dependencies: SLURM; `bowtie2-build`; `python3` (stdlib `json` only).
 
 ### summarize.py

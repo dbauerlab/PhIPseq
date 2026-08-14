@@ -12,7 +12,16 @@
 # to under-requesting. bowtie2 -p4 + cutadapt -j2 run sequentially within
 # one sample (trim, then align), so 4 CPUs covers the peak.
 #
-# Submit with: sbatch scripts/run_sample.sbatch
+# Submit with:
+#   export PHIPSEQ_REPO_DIR=/path/to/PhIPseq   # once per shell session
+#   sbatch scripts/run_sample.sbatch
+# (or: sbatch --export=ALL,PHIPSEQ_REPO_DIR=/path/to/PhIPseq scripts/run_sample.sbatch)
+#
+# PHIPSEQ_REPO_DIR is required -- SLURM copies a submitted script into a
+# per-job spool directory on the compute node (e.g. /tmp/slurmd/...) and
+# runs *that* copy, so the script's own location (${BASH_SOURCE[0]}) can't
+# be used to find the repo checkout the way a plain bash script normally
+# would.
 #
 # SLURM's own default output naming applies (no static --output directive
 # here, since results/ now lives in run_dir -- configured in
@@ -28,7 +37,7 @@
 #SBATCH --array=1-6
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="${PHIPSEQ_REPO_DIR:?Set PHIPSEQ_REPO_DIR to the repo checkout path before submitting (see header comment above)}"
 
 # Pin exact tool versions from reference/hpc_modules.json -- keep this line
 # in sync with that file by hand if the cluster's module versions change.

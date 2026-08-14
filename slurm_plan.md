@@ -443,3 +443,30 @@ everything living under wherever the repo is cloned.
   repo is untouched** by this change — it predates the run_dir split
   entirely and is called out as a legacy/historical artifact in
   [README.md](README.md#overview), not deleted or moved.
+
+## 10. Bugfix: `.sbatch` scripts can't find the repo via their own path
+
+Found in testing (`build_index.sbatch` first, but the same bug existed in
+all three `.sbatch` scripts): `PROJECT_DIR="$(cd "$(dirname
+"${BASH_SOURCE[0]}")/.." && pwd)"` — the pattern used everywhere else in
+this repo (`run_sample.sh`, `setup_env.sh`) to find the repo checkout
+relative to a script's own file location — does not work in a `.sbatch`
+script under SLURM. `sbatch` copies the submitted script into a per-job
+spool directory on the compute node (observed: `/tmp/slurmd/...`) and
+`slurmd` executes *that* copy, not the originally-submitted file, so
+`${BASH_SOURCE[0]}` inside the running job resolves to the spool path, not
+the repo. `build_index.sbatch` surfaced this first because it uses
+`PROJECT_DIR` directly to build a `python3 -c` call to load
+`reference/paths.json`; `run_sample.sbatch`/`summarize.sbatch` have the
+identical bug, just not yet hit in testing.
+
+**Fix**: replace the `${BASH_SOURCE[0]}`-based resolution in all three
+`.sbatch` scripts with a required environment variable, `PHIPSEQ_REPO_DIR`,
+that the user exports once per shell session before any `sbatch` submission
+(`PROJECT_DIR="${PHIPSEQ_REPO_DIR:?...}"` — fails fast with a clear message
+if unset, rather than silently resolving to the wrong directory the way the
+old pattern did). `run_sample.sh` itself is unaffected and keeps its
+`${BASH_SOURCE[0]}`-based resolution, since it's invoked as a plain `bash
+<path>` subprocess from within `run_sample.sbatch` (or directly, for
+local/dev use) — never submitted to `sbatch` itself, so it never gets
+copied to a spool directory.

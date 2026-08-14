@@ -5,8 +5,16 @@
 # no script in this repo did this step -- it was a manual/undocumented
 # prerequisite; this closes that gap for the SLURM deployment.
 #
-# Submit with: sbatch scripts/build_index.sbatch
+# Submit with (PHIPSEQ_REPO_DIR is required -- see below):
+#   export PHIPSEQ_REPO_DIR=/path/to/PhIPseq   # once per shell session
+#   sbatch scripts/build_index.sbatch
 # (after running `python scripts/build_reference.py` to produce the FASTA)
+#
+# PHIPSEQ_REPO_DIR is required -- SLURM copies a submitted script into a
+# per-job spool directory on the compute node (e.g. /tmp/slurmd/...) and
+# runs *that* copy, so the script's own location (${BASH_SOURCE[0]}) can't
+# be used to find the repo checkout the way a plain bash script normally
+# would.
 #
 # SLURM's own default output naming applies (this script has no static
 # --output directive, since results/reference output now live in run_dir,
@@ -19,7 +27,7 @@
 #SBATCH --time=01:00:00
 set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="${PHIPSEQ_REPO_DIR:?Set PHIPSEQ_REPO_DIR to the repo checkout path before submitting (see header comment above)}"
 RUN_DIR="$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/reference/paths.json'))['run_dir'])")"
 
 module load Bowtie2/2.5.4-GCC-14.2.0
