@@ -3,7 +3,7 @@ already discussed: for each sample, the P10-P90 "typical range" of
 per-peptide read counts, the median, and any near-dropout outliers (<=10
 reads) called out explicitly rather than buried in a max/min ratio.
 
-Usage: evenness_summary_figure.py [samples_tsv]  (defaults to scripts/samples.tsv)
+Usage: evenness_summary_figure.py [samples_tsv]  (defaults to reference/samples.tsv)
 """
 import json
 import sys
@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-SAMPLES_TSV = PROJECT_DIR / "scripts" / "samples.tsv"
+SAMPLES_TSV = PROJECT_DIR / "reference" / "samples.tsv"
 
 # run_dir (where results/ and generated reference data live) is configured
 # in reference/paths.json, a hand-maintained config file kept in the repo

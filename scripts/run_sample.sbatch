@@ -1,5 +1,5 @@
 #!/bin/bash
-# SLURM array job: one task per row of scripts/samples.tsv -- the sole
+# SLURM array job: one task per row of reference/samples.tsv -- the sole
 # orchestration mechanism for running all samples (there is no local/
 # non-SLURM batch driver in this repo). SLURM's own array scheduling is
 # left unthrottled (no `%N` on --array) -- the old MAX_PARALLEL=1
@@ -53,7 +53,7 @@ conda activate phipseq
 # SLURM_ARRAY_TASK_ID is 1-based; +1 skips samples.tsv's header line, so
 # task 1 -> the first sample row, task 6 -> the last.
 LINE=$((SLURM_ARRAY_TASK_ID + 1))
-read -r TC_ID LIBRARY SAMPLE_PREFIX < <(sed -n "${LINE}p" "$PROJECT_DIR/scripts/samples.tsv")
+read -r TC_ID LIBRARY SAMPLE_PREFIX < <(sed -n "${LINE}p" "$PROJECT_DIR/reference/samples.tsv")
 
 echo "Task $SLURM_ARRAY_TASK_ID -> $TC_ID ($LIBRARY, $SAMPLE_PREFIX)"
 bash "$PROJECT_DIR/scripts/run_sample.sh" "$TC_ID" "$LIBRARY" "$SAMPLE_PREFIX"

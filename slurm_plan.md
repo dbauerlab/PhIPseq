@@ -470,3 +470,18 @@ old pattern did). `run_sample.sh` itself is unaffected and keeps its
 <path>` subprocess from within `run_sample.sbatch` (or directly, for
 local/dev use) — never submitted to `sbatch` itself, so it never gets
 copied to a spool directory.
+
+## 11. Sample sheet relocated, preview sheet removed
+
+At the user's request, post-migration: `scripts/samples.tsv` moved to
+`reference/samples.tsv` (alongside the other hand-maintained config —
+`adapters.json`, `paths.json`, etc. — rather than sitting among the
+executable scripts), and `scripts/samples_preview.tsv` (the `TC_1`–`TC_3`
+subset sheet used for partial/early runs before all 6 samples were
+processed) was deleted outright rather than moved. `summarize.py`,
+`completeness_figures.py`, `evenness_summary_figure.py`,
+`overview_figure.py`, and `run_sample.sbatch` all updated to read
+`reference/samples.tsv`. The four aggregation scripts still accept an
+arbitrary alternate sample sheet as an optional first CLI argument (e.g.
+for a custom subset), so this doesn't remove that capability — only the
+one bundled example file.

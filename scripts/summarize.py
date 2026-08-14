@@ -26,7 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-SAMPLES_TSV = PROJECT_DIR / "scripts" / "samples.tsv"
+SAMPLES_TSV = PROJECT_DIR / "reference" / "samples.tsv"
 
 # run_dir (where results/ and generated reference data live) is configured
 # in reference/paths.json, a hand-maintained config file kept in the repo

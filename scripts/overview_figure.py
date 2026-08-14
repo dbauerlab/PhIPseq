@@ -3,7 +3,7 @@ designed peptides detected) and evenness (typical range + near-dropout
 outliers) side by side, colored by library so the two T7CoV vs T7Vir3.2
 batches are visually grouped.
 
-Usage: overview_figure.py [samples_tsv]  (defaults to scripts/samples.tsv,
+Usage: overview_figure.py [samples_tsv]  (defaults to reference/samples.tsv,
 i.e. all 6 samples once the full run has completed)
 """
 import json
@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-SAMPLES_TSV = PROJECT_DIR / "scripts" / "samples.tsv"
+SAMPLES_TSV = PROJECT_DIR / "reference" / "samples.tsv"
 
 # run_dir (where results/ and generated reference data live) is configured
 # in reference/paths.json, a hand-maintained config file kept in the repo
