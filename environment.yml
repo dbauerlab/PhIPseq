@@ -1,0 +1,15 @@
+# Conda environment for the Python side of the pipeline only.
+# cutadapt/bowtie2/samtools are NOT included here -- they come from the
+# HPC's module system instead (pinned versions in reference/hpc_modules.json),
+# since specific pre-built module versions are already available on the
+# cluster.
+name: phipseq
+channels:
+  - conda-forge
+dependencies:
+  - python              # unpinned: always resolve the current stable conda-forge release
+  - pandas>=2.2
+  - numpy>=2.1
+  - matplotlib>=3.9
+  - scipy>=1.14
+  - openpyxl>=3.1        # pandas.read_excel engine, needed by build_reference.py

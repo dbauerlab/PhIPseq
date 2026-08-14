@@ -1,0 +1,5 @@
+{
+  "bowtie2": "Bowtie2/2.5.4-GCC-14.2.0",
+  "cutadapt": "cutadapt/4.2-GCCcore-11.3.0",
+  "samtools": "SAMtools/1.22.1-GCC-14.2.0"
+}
