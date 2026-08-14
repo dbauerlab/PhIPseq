@@ -36,7 +36,7 @@ def main():
     samples = pd.read_csv(samples_path, sep="\t")
     meta = pd.read_csv(META_CSV, dtype=str)
     lib_of_ref = meta.set_index("ref_id")["library"]
-    mat = pd.read_csv(RESULTS_DIR / "count_matrix_R1.csv", index_col=0)
+    mat = pd.read_csv(RESULTS_DIR / "count_matrix.csv", index_col=0)
 
     fig, (ax_cov, ax_even) = plt.subplots(1, 2, figsize=(1.6 * len(samples) + 4, 5.5))
 
