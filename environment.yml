@@ -13,3 +13,4 @@ dependencies:
   - matplotlib>=3.9
   - scipy>=1.14
   - openpyxl>=3.1        # pandas.read_excel engine, needed by build_reference.py
+  - tabulate>=0.9        # pandas.DataFrame.to_markdown engine, needed by summarize.py

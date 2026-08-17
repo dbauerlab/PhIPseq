@@ -97,8 +97,9 @@ PhIPseq/
 - `python` (unpinned — always resolves the current stable conda-forge
   release)
 - `pandas>=2.2`, `numpy>=2.1`, `matplotlib>=3.9`, `scipy>=1.14`,
-  `openpyxl>=3.1` (the last is pandas's `.xlsx` engine for
-  `build_reference.py`)
+  `openpyxl>=3.1` (pandas's `.xlsx` engine for `build_reference.py`),
+  `tabulate>=0.9` (pandas's markdown-table engine, for
+  `summarize.py`'s `qc.to_markdown()` call)
 
 These floors are recommended current-stable versions, not confirmed against
 what the pre-migration `results/` were generated with (no version pins
@@ -612,11 +613,13 @@ override it at submission time.
   - Per library, plot a Pearson-correlation heatmap of log1p(counts) across
     that library's samples (batch reproducibility).
   - Assemble `summary.md`: the QC table plus embedded links to the three
-    figure sets above.
+    figure sets above (`qc.to_markdown()`, which needs `tabulate`
+    installed).
 - Key parameters: optional CLI arg = path to sample sheet (default
   `reference/samples.tsv`). (No more `LANES` constant — lanes are already
   merged upstream in `run_sample.sh`.)
-- Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg` backend).
+- Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg` backend), `tabulate`
+  (pandas's `to_markdown()` engine).
 
 ### completeness_figures.py
 - Purpose: produce plainer, completeness-focused figures (coverage,

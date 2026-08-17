@@ -485,3 +485,16 @@ processed) was deleted outright rather than moved. `summarize.py`,
 arbitrary alternate sample sheet as an optional first CLI argument (e.g.
 for a custom subset), so this doesn't remove that capability — only the
 one bundled example file.
+
+## 12. Bugfix: missing `tabulate` dependency
+
+Found in testing: `summarize.sbatch` failed on `summarize.py`'s
+`qc.to_markdown(...)` call with `ImportError: Import tabulate failed` —
+pandas's `to_markdown()` needs the optional `tabulate` package, which
+`environment.yml` never listed (missed when the conda env was first
+written, §1). Fixed by adding `tabulate>=0.9` to `environment.yml`.
+Existing already-built `phipseq` envs need it installed directly
+(`conda install -n phipseq -c conda-forge tabulate`) rather than picking it
+up automatically — `scripts/setup_env.sh`'s `conda env update` path does
+pick up new `environment.yml` dependencies on top of an existing env, so
+re-running it also works.
