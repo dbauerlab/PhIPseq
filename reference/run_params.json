@@ -1,5 +1,5 @@
 {
-  "lanes": ["L007", "L008"],
+  "lanes": ["L006"],
   "bowtie_threads": 4,
   "cutadapt_threads": 2
 }

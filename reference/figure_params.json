@@ -1,4 +1,9 @@
 {
   "outlier_threshold": 10,
-  "library_colors": {"CoV": "tab:blue", "Vir3": "tab:orange"}
+  "library_colors": {"CoV": "tab:blue", "Vir3": "tab:orange"},
+  "legend_bbox_anchor": [1.02, 0.5],
+  "xtick_rotation": 90,
+  "heatmap_tick_fontsize": 12,
+  "detection_histogram_ncols": 4,
+  "pca_n_top_variable_peptides": 5000
 }

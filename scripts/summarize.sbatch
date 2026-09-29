@@ -20,10 +20,12 @@
 # pass --output= explicitly at submission time, or submit from within
 # run_dir, if you want control over where the job's own stdout/stderr
 # capture lands.
+
 #SBATCH --job-name=phipseq_summarize
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --time=02:00:00
+
 set -euo pipefail
 
 PROJECT_DIR="${PHIPSEQ_REPO_DIR:?Set PHIPSEQ_REPO_DIR to the repo checkout path before submitting (see header comment above)}"

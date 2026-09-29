@@ -32,6 +32,8 @@ META_CSV = RUN_DIR / "reference" / "combined_metadata.csv"
 # overview_figure.py) rather than being duplicated as a literal here.
 _fig_params = json.loads((PROJECT_DIR / "reference" / "figure_params.json").read_text())
 OUTLIER_THRESHOLD = _fig_params["outlier_threshold"]  # reads; peptides at or below this are called out individually
+LEGEND_BBOX_ANCHOR = tuple(_fig_params["legend_bbox_anchor"])
+XTICK_ROTATION = _fig_params["xtick_rotation"]
 
 
 def main():
@@ -44,6 +46,7 @@ def main():
     fig, ax = plt.subplots(figsize=(1.4 * len(samples) + 2, 5.5))
     palette = plt.get_cmap("tab10")
     xtick_labels = []
+    near_dropout_labeled = False
 
     for i, (_, srow) in enumerate(samples.iterrows()):
         tc_id, library = srow["tc_id"], srow["library"]
@@ -65,25 +68,36 @@ def main():
         outliers = detected[detected <= OUTLIER_THRESHOLD]
         n_missing = int((counts == 0).sum())
         for val in outliers.values:
-            ax.plot(i, val, "v", color="firebrick", markersize=9, zorder=6,
-                     label=f"near-dropout (<={OUTLIER_THRESHOLD} reads)" if i == 0 and val == outliers.values[0] else None)
+            label = None
+            if not near_dropout_labeled:
+                label = f"near-dropout (<={OUTLIER_THRESHOLD} reads)"
+                near_dropout_labeled = True
+            ax.plot(i, val, "v", color="firebrick", markersize=9, zorder=6, label=label)
         label_bits = []
         if len(outliers):
-            label_bits.append(f"{len(outliers)} near-dropout")
+            label_bits.append(f"{len(outliers)} ND")
         if n_missing:
-            label_bits.append(f"{n_missing} missing")
-        extra = "\n" + ", ".join(label_bits) if label_bits else "\nall clean"
+            label_bits.append(f"{n_missing} miss")
+        extra = " (" + ", ".join(label_bits) + ")" if label_bits else " (clean)"
+        # Kept as a single line: rotated multi-line tick labels lay out very
+        # differently from rotated single-line ones (each line becomes its
+        # own column) and need much more room than is practical here.
         xtick_labels.append(f"{tc_id}{extra}")
 
     ax.set_yscale("log")
     ax.set_xlim(-0.6, len(samples) - 0.4)
     ax.set_xticks(range(len(samples)))
-    ax.set_xticklabels(xtick_labels)
+    ax.set_xticklabels(xtick_labels, rotation=XTICK_ROTATION, ha="center", fontsize=8)
     ax.set_ylabel("Reads per peptide (log scale)")
-    ax.set_title("Library evenness: how tightly clustered is representation?")
+    ax.set_title("Library evenness: how tightly clustered is representation?\n(ND = near-dropout, <=10 reads)")
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles, labels, loc="upper right", fontsize=8)
-    fig.tight_layout()
+    ax.legend(handles, labels, loc="center left", bbox_to_anchor=LEGEND_BBOX_ANCHOR, borderaxespad=0, fontsize=8)
+    # Fixed fractions of the (sample-count-scaled) figure size are reserved
+    # for the outside legend and the rotated tick labels. Not using
+    # bbox_inches="tight" here: with this matplotlib version it can blow up
+    # the canvas to a pathological size when combined with a log-scaled axis
+    # and many plotted markers.
+    fig.subplots_adjust(right=1 - 3.2 / fig.get_figwidth(), bottom=0.3)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(FIG_DIR / "evenness_summary.png", dpi=150)
     plt.close(fig)

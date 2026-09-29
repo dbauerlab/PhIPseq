@@ -3,14 +3,20 @@ coverage, dropouts, evenness, cross-library mapping, batch reproducibility.
 
 Reads <run_dir>/results/<TC_ID>/counts.tsv (one paired-end fragment count
 per peptide, produced by run_sample.sh's merged-lane, paired-mode
-cutadapt/bowtie2 pipeline) + its cutadapt.log/bowtie2.log, and
-<run_dir>/reference/combined_metadata.csv. Writes, all under <run_dir>:
+cutadapt/bowtie2 pipeline) + its cutadapt.log/bowtie2.log,
+<run_dir>/reference/combined_metadata.csv, and (optionally) a per-sample
+metadata sheet (reference/samples_meta.csv by default) used to colour/shape
+the PCA plot. Writes, all under <run_dir>:
   results/count_matrix.csv
   results/qc_summary.csv
   results/figures/*.png
   results/summary.md
 <run_dir> is configured in reference/paths.json, separate from this repo
 checkout.
+
+Usage: summarize.py [samples_tsv] [samples_meta_csv]
+  samples_tsv       defaults to reference/samples.tsv
+  samples_meta_csv  defaults to reference/samples_meta.csv (skipped if missing)
 """
 import csv
 import json
@@ -24,9 +30,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 SAMPLES_TSV = PROJECT_DIR / "reference" / "samples.tsv"
+SAMPLES_META_CSV = PROJECT_DIR / "reference" / "samples_meta.csv"
 
 # run_dir (where results/ and generated reference data live) is configured
 # in reference/paths.json, a hand-maintained config file kept in the repo
@@ -37,10 +46,35 @@ RESULTS_DIR = RUN_DIR / "results"
 FIG_DIR = RESULTS_DIR / "figures"
 META_CSV = RUN_DIR / "reference" / "combined_metadata.csv"
 
+# Figure styling shared across all figure-generating scripts.
+_fig_params = json.loads((PROJECT_DIR / "reference" / "figure_params.json").read_text())
+LIBRARY_COLORS = _fig_params["library_colors"]
+LEGEND_BBOX_ANCHOR = tuple(_fig_params["legend_bbox_anchor"])
+XTICK_ROTATION = _fig_params["xtick_rotation"]
+HEATMAP_TICK_FONTSIZE = _fig_params["heatmap_tick_fontsize"]
+PCA_N_TOP_VARIABLE_PEPTIDES = _fig_params["pca_n_top_variable_peptides"]
+
+MARKER_CYCLE = ["o", "s", "^", "D", "v", "P", "X", "*", "h", "<", ">"]
+
+
+def legend_outside(ax, **kwargs):
+    """Place a legend to the right of the axes rather than inside the
+    plotting area."""
+    return ax.legend(loc="center left", bbox_to_anchor=LEGEND_BBOX_ANCHOR, borderaxespad=0, **kwargs)
+
 
 def load_samples():
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else SAMPLES_TSV
     return pd.read_csv(path, sep="\t")
+
+
+def load_sample_meta():
+    """Optional per-sample metadata (e.g. ip, treatment) used only to
+    colour/shape the PCA plot. Returns None if not available."""
+    path = Path(sys.argv[2]) if len(sys.argv) > 2 else SAMPLES_META_CSV
+    if not path.exists():
+        return None
+    return pd.read_csv(path, dtype=str)
 
 
 def load_counts(tc_id):
@@ -133,11 +167,64 @@ def lorenz_curve(counts):
     return frac_pop, cum
 
 
+def shannon_entropy(counts, base=2):
+    """Shannon diversity (in bits, base 2) of a sample's read counts across
+    its own peptide library: how evenly are reads spread across peptides,
+    vs. concentrated on a few?"""
+    x = np.asarray(counts, dtype=float)
+    total = x.sum()
+    if total <= 0:
+        return float("nan")
+    p = x[x > 0] / total
+    return float(-np.sum(p * np.log(p)) / np.log(base))
+
+
+def pick_color_shape_columns(sample_meta_cols):
+    """From metadata columns (excluding the sample id column), use the
+    lowest-cardinality column for point shape (matplotlib only has a
+    handful of practical marker styles) and the highest-cardinality column
+    for point colour (a colormap handles many categories better)."""
+    candidates = [(sample_meta_cols[c].nunique(dropna=True), c)
+                  for c in sample_meta_cols.columns if sample_meta_cols[c].nunique(dropna=True) > 1]
+    candidates.sort()
+    if not candidates:
+        return None, None
+    if len(candidates) == 1:
+        return candidates[0][1], None
+    return candidates[-1][1], candidates[0][1]
+
+
+def compute_pca(mat, tc_ids):
+    """PCA of samples, restricted to peptides detected (>0 reads) in every
+    sample and the top N most variable of those (by variance of log1p
+    counts), mean-centered per peptide. Returns (scores, explained_var) or
+    (None, None) if there isn't enough shared signal to run PCA on."""
+    sub = mat[tc_ids]
+    detected_in_all = (sub > 0).all(axis=1)
+    sub = sub.loc[detected_in_all]
+    if sub.shape[0] < 2 or sub.shape[1] < 2:
+        return None, None
+    log_sub = np.log1p(sub)
+    top_ids = log_sub.var(axis=1).sort_values(ascending=False).head(PCA_N_TOP_VARIABLE_PEPTIDES).index
+    log_sub = log_sub.loc[top_ids]
+
+    X = log_sub.T.to_numpy()  # samples x peptides
+    X = X - X.mean(axis=0, keepdims=True)
+    U, S, _Vt = np.linalg.svd(X, full_matrices=False)
+    scores = U * S
+    explained_var = (S ** 2) / np.sum(S ** 2)
+    return scores, explained_var
+
+
 def main():
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     samples = load_samples()
     meta = pd.read_csv(META_CSV, dtype=str)
     meta["ref_id"] = meta["ref_id"].astype(str)
+
+    sample_meta = load_sample_meta()
+    if sample_meta is not None:
+        samples = samples.merge(sample_meta, left_on="tc_id", right_on="sample", how="left")
 
     print("Building count matrix...", file=sys.stderr)
     mat = build_matrix(samples, meta)
@@ -158,6 +245,8 @@ def main():
         stats = sample_readstats(tc_id)
 
         total_mapped = own_counts.sum() + other_counts.sum()
+        n_designed = len(own_refs)
+        entropy = shannon_entropy(own_counts.values)
         qc_rows.append({
             "tc_id": tc_id,
             "library": library,
@@ -167,12 +256,14 @@ def main():
             "concordant_multimap_rate": stats["concordant_multimap_rate"],
             "overall_map_rate": stats["overall_map_rate"],
             "pct_mapped_to_other_library": other_counts.sum() / total_mapped if total_mapped else float("nan"),
-            "n_designed_peptides": len(own_refs),
+            "n_designed_peptides": n_designed,
             "n_peptides_detected": int((own_counts > 0).sum()),
             "pct_library_covered": (own_counts > 0).mean(),
             "n_dropouts": int((own_counts == 0).sum()),
             "median_count_detected": own_counts[own_counts > 0].median(),
             "gini_own_library": gini(own_counts.values),
+            "shannon_entropy": entropy,
+            "normalized_shannon_entropy": entropy / np.log2(n_designed) if n_designed > 1 else float("nan"),
         })
 
     qc = pd.DataFrame(qc_rows)
@@ -193,9 +284,8 @@ def main():
     ax.set_xlabel("Peptide rank")
     ax.set_ylabel("Read-pair count")
     ax.set_title("Rank-abundance (own-library peptides)")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "rank_abundance.png", dpi=150)
+    legend_outside(ax, fontsize=8)
+    fig.savefig(FIG_DIR / "rank_abundance.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     # Lorenz curves
@@ -209,9 +299,8 @@ def main():
     ax.set_xlabel("Cumulative fraction of peptides")
     ax.set_ylabel("Cumulative fraction of reads")
     ax.set_title("Lorenz curves (library evenness)")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "lorenz_curves.png", dpi=150)
+    legend_outside(ax, fontsize=8)
+    fig.savefig(FIG_DIR / "lorenz_curves.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     # Batch reproducibility heatmaps, per library
@@ -222,9 +311,9 @@ def main():
         fig, ax = plt.subplots(figsize=(1.2 * len(tc_ids) + 2, 1.2 * len(tc_ids) + 2))
         im = ax.imshow(corr.values, vmin=0, vmax=1, cmap="viridis")
         ax.set_xticks(range(len(tc_ids)))
-        ax.set_xticklabels(tc_ids, rotation=45, ha="right")
+        ax.set_xticklabels(tc_ids, rotation=45, ha="right", fontsize=HEATMAP_TICK_FONTSIZE)
         ax.set_yticks(range(len(tc_ids)))
-        ax.set_yticklabels(tc_ids)
+        ax.set_yticklabels(tc_ids, fontsize=HEATMAP_TICK_FONTSIZE)
         for i in range(len(tc_ids)):
             for j in range(len(tc_ids)):
                 ax.text(j, i, f"{corr.values[i, j]:.2f}", ha="center", va="center", color="white", fontsize=8)
@@ -233,6 +322,80 @@ def main():
         fig.tight_layout()
         fig.savefig(FIG_DIR / f"batch_correlation_{library}.png", dpi=150)
         plt.close(fig)
+
+    # Shannon entropy per sample
+    fig, ax = plt.subplots(figsize=(1.2 * len(samples) + 2, 4.5))
+    tc_ids_ordered = qc["tc_id"].tolist()
+    bar_colors = [LIBRARY_COLORS.get(lib, "gray") for lib in qc["library"]]
+    ax.bar(tc_ids_ordered, qc["normalized_shannon_entropy"], color=bar_colors)
+    ax.set_xticks(range(len(tc_ids_ordered)))
+    ax.set_xticklabels(tc_ids_ordered, rotation=XTICK_ROTATION, ha="center")
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("Normalized Shannon entropy\n(H / log2(designed library size))")
+    ax.set_title("Library diversity: how evenly are reads spread across peptides?")
+    handles = [Patch(color=c, label=lib) for lib, c in LIBRARY_COLORS.items() if lib in set(qc["library"])]
+    if handles:
+        legend_outside(ax, handles=handles, fontsize=8)
+    fig.savefig(FIG_DIR / "shannon_entropy.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # PCA of samples
+    pca_written = False
+    scores, explained_var = compute_pca(mat, samples["tc_id"].tolist())
+    if scores is not None:
+        color_col, shape_col = (None, None)
+        if sample_meta is not None:
+            color_col, shape_col = pick_color_shape_columns(sample_meta.drop(columns=["sample"]))
+
+        fig, ax = plt.subplots(figsize=(7.5, 6))
+
+        if color_col:
+            categories = samples[color_col].fillna("unknown").astype(str)
+            uniq_colors = sorted(categories.unique())
+            cmap = plt.get_cmap("tab20", max(len(uniq_colors), 1))
+            color_map = {c: cmap(i) for i, c in enumerate(uniq_colors)}
+            point_colors = categories.map(color_map)
+        else:
+            categories = samples["library"].astype(str)
+            point_colors = categories.map(lambda lib: LIBRARY_COLORS.get(lib, "gray"))
+
+        if shape_col:
+            shape_categories = samples[shape_col].fillna("unknown").astype(str)
+            uniq_shapes = sorted(shape_categories.unique())
+            shape_map = {c: MARKER_CYCLE[i % len(MARKER_CYCLE)] for i, c in enumerate(uniq_shapes)}
+            markers = shape_categories.map(shape_map)
+        else:
+            markers = pd.Series(["o"] * len(samples))
+
+        for marker in markers.unique():
+            idx = np.where(markers.values == marker)[0]
+            ax.scatter(scores[idx, 0], scores[idx, 1], c=[point_colors.iloc[i] for i in idx],
+                       marker=marker, s=70, edgecolor="black", linewidth=0.5)
+
+        ax.set_xlabel(f"PC1 ({explained_var[0]:.1%} variance)")
+        ax.set_ylabel(f"PC2 ({explained_var[1]:.1%} variance)" if len(explained_var) > 1 else "PC2")
+        title_suffix = f" (top {PCA_N_TOP_VARIABLE_PEPTIDES} variable, shared-detected peptides)"
+        ax.set_title("PCA of samples" + title_suffix, fontsize=10)
+
+        legend_handles = []
+        color_label = color_col or "library"
+        legend_handles.append(Line2D([], [], linestyle="", label=f"— {color_label} —"))
+        for cat, color in (color_map.items() if color_col else LIBRARY_COLORS.items()):
+            legend_handles.append(Line2D([], [], marker="o", linestyle="", color=color, markeredgecolor="black",
+                                          markersize=8, label=str(cat)))
+        if shape_col:
+            legend_handles.append(Line2D([], [], linestyle="", label=f"— {shape_col} —"))
+            for cat, marker in shape_map.items():
+                legend_handles.append(Line2D([], [], marker=marker, linestyle="", color="gray",
+                                              markeredgecolor="black", markersize=8, label=str(cat)))
+        ax.legend(handles=legend_handles, loc="center left", bbox_to_anchor=LEGEND_BBOX_ANCHOR,
+                  borderaxespad=0, fontsize=8)
+        fig.savefig(FIG_DIR / "pca_samples.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        pca_written = True
+    else:
+        print("Skipping PCA figure: fewer than 2 peptides detected in every sample, or fewer than 2 samples.",
+              file=sys.stderr)
 
     # --- Markdown summary ---
     lines = ["# PhIP-seq library QC summary", ""]
@@ -248,6 +411,11 @@ def main():
     lines.append("")
     for library in samples["library"].unique():
         lines.append(f"![{library} batch correlation](figures/batch_correlation_{library}.png)")
+        lines.append("")
+    lines.append("![Shannon entropy](figures/shannon_entropy.png)")
+    lines.append("")
+    if pca_written:
+        lines.append("![PCA of samples](figures/pca_samples.png)")
         lines.append("")
     (RESULTS_DIR / "summary.md").write_text("\n".join(lines))
     print(f"Wrote {RESULTS_DIR / 'summary.md'}", file=sys.stderr)

@@ -35,6 +35,8 @@ META_CSV = RUN_DIR / "reference" / "combined_metadata.csv"
 _fig_params = json.loads((PROJECT_DIR / "reference" / "figure_params.json").read_text())
 OUTLIER_THRESHOLD = _fig_params["outlier_threshold"]  # reads
 LIBRARY_COLORS = _fig_params["library_colors"]
+LEGEND_BBOX_ANCHOR = tuple(_fig_params["legend_bbox_anchor"])
+XTICK_ROTATION = _fig_params["xtick_rotation"]
 
 
 def main():
@@ -44,7 +46,7 @@ def main():
     lib_of_ref = meta.set_index("ref_id")["library"]
     mat = pd.read_csv(RESULTS_DIR / "count_matrix.csv", index_col=0)
 
-    fig, (ax_cov, ax_even) = plt.subplots(1, 2, figsize=(1.6 * len(samples) + 4, 5.5))
+    fig, (ax_cov, ax_even) = plt.subplots(2, 1, figsize=(0.7 * len(samples) + 5, 11))
 
     xtick_labels = []
     seen_libs = []
@@ -76,26 +78,35 @@ def main():
         seen_libs.append(library)
         n_missing = int((counts == 0).sum())
         n_outlier = int((detected <= OUTLIER_THRESHOLD).sum()) if len(detected) else 0
-        extra_bits = [b for b in [f"{n_outlier} near-dropout" if n_outlier else "", f"{n_missing} missing" if n_missing else ""] if b]
-        xtick_labels.append(tc_id + ("\n" + ", ".join(extra_bits) if extra_bits else ""))
+        # Kept as a single line: rotated multi-line tick labels lay out very
+        # differently from rotated single-line ones (each line becomes its
+        # own column) and need much more room than is practical here.
+        extra_bits = [b for b in [f"{n_outlier} ND" if n_outlier else "", f"{n_missing} miss" if n_missing else ""] if b]
+        xtick_labels.append(tc_id + (" (" + ", ".join(extra_bits) + ")" if extra_bits else ""))
 
     ax_cov.set_ylim(0, 108)
     ax_cov.set_xticks(range(len(samples)))
-    ax_cov.set_xticklabels(samples["tc_id"])
+    ax_cov.set_xticklabels(samples["tc_id"], rotation=XTICK_ROTATION, ha="center")
     ax_cov.set_ylabel("% of designed peptides detected")
     ax_cov.set_title("Coverage")
-    ax_cov.legend(fontsize=8, loc="lower right")
+    ax_cov.legend(loc="center left", bbox_to_anchor=LEGEND_BBOX_ANCHOR, borderaxespad=0, fontsize=8)
 
     ax_even.set_yscale("log")
     ax_even.set_xlim(-0.6, len(samples) - 0.4)
     ax_even.set_xticks(range(len(samples)))
-    ax_even.set_xticklabels(xtick_labels, fontsize=8)
+    ax_even.set_xticklabels(xtick_labels, fontsize=8, rotation=XTICK_ROTATION, ha="center")
     ax_even.set_ylabel("Reads per peptide (log scale)")
-    ax_even.set_title("Evenness (10th-90th percentile + outliers)")
-    ax_even.legend(fontsize=8, loc="upper right")
+    ax_even.set_title("Evenness (10th-90th percentile + outliers)\n(ND = near-dropout, <=10 reads)")
+    ax_even.legend(loc="center left", bbox_to_anchor=LEGEND_BBOX_ANCHOR, borderaxespad=0, fontsize=8)
 
     fig.suptitle("All samples: library completeness and evenness overview", fontsize=13)
-    fig.tight_layout()
+    # Fixed fractions of the figure size are reserved for the outside
+    # legends, the rotated tick labels, and a gap between the two stacked
+    # panels (their rotated labels/title would otherwise collide). Not using
+    # bbox_inches="tight" here: with this matplotlib version it can blow up
+    # the canvas to a pathological size when combined with a log-scaled axis
+    # and many plotted markers.
+    fig.subplots_adjust(right=1 - 2.2 / fig.get_figwidth(), bottom=0.22, top=0.92, hspace=0.9)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     fig.savefig(FIG_DIR / "overview_all_samples.png", dpi=150)
     plt.close(fig)

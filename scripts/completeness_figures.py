@@ -34,6 +34,14 @@ RESULTS_DIR = RUN_DIR / "results"
 FIG_DIR = RESULTS_DIR / "figures"
 META_CSV = RUN_DIR / "reference" / "combined_metadata.csv"
 
+# Figure thresholds/styling live in reference/figure_params.json (shared
+# with the other figure-generating scripts) rather than being duplicated as
+# literals here.
+_fig_params = json.loads((PROJECT_DIR / "reference" / "figure_params.json").read_text())
+LEGEND_BBOX_ANCHOR = tuple(_fig_params["legend_bbox_anchor"])
+XTICK_ROTATION = _fig_params["xtick_rotation"]
+DETECTION_HISTOGRAM_NCOLS = _fig_params["detection_histogram_ncols"]
+
 
 def expected_unique_at_depths(counts, depths):
     """Exact expected number of species with >=1 read when subsampling
@@ -70,8 +78,8 @@ def main():
     FIG_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- 1. Coverage bar chart ---
-    fig, ax = plt.subplots(figsize=(7, 4))
-    labels, pcts, texts, colors = [], [], [], []
+    fig, ax = plt.subplots(figsize=(1.2 * len(samples) + 2, 4))
+    labels, pcts, colors = [], [], []
     palette = plt.get_cmap("tab10")
     for i, (_, srow) in enumerate(samples.iterrows()):
         tc_id, library = srow["tc_id"], srow["library"]
@@ -81,15 +89,13 @@ def main():
         detected = int((mat.loc[own_refs, tc_id] > 0).sum())
         labels.append(tc_id)
         pcts.append(100 * detected / total if total else 0)
-        texts.append(f"{detected}/{total}")
         colors.append(palette(i))
-    bars = ax.bar(labels, pcts, color=colors)
+    ax.bar(labels, pcts, color=colors)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=XTICK_ROTATION, ha="center")
     ax.set_ylim(0, 105)
     ax.set_ylabel("% of designed peptides detected (>=1 read)")
     ax.set_title("Library coverage: how complete is each batch?")
-    for bar, txt in zip(bars, texts):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1.5, txt,
-                ha="center", va="bottom", fontsize=9)
     fig.tight_layout()
     fig.savefig(FIG_DIR / "coverage_bar.png", dpi=150)
     plt.close(fig)
@@ -114,17 +120,18 @@ def main():
     ax.set_xlabel("Reads subsampled")
     ax.set_ylabel("Expected unique peptides detected")
     ax.set_title("Have we sequenced deep enough? (rarefaction)\ncurve flattening = fully saturated at this depth")
-    ax.legend(fontsize=8)
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "rarefaction_curves.png", dpi=150)
+    ax.legend(loc="center left", bbox_to_anchor=LEGEND_BBOX_ANCHOR, borderaxespad=0, fontsize=8)
+    fig.savefig(FIG_DIR / "rarefaction_curves.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     # --- 3. Detection histogram with explicit "missing" bin ---
     n_samples = len(samples)
-    fig, axes = plt.subplots(1, n_samples, figsize=(4 * n_samples, 4), sharey=True)
-    if n_samples == 1:
-        axes = [axes]
-    for ax, (_, srow) in zip(axes, samples.iterrows()):
+    ncols = min(DETECTION_HISTOGRAM_NCOLS, n_samples)
+    nrows = int(np.ceil(n_samples / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows), sharey=True, squeeze=False)
+    axes_flat = axes.flatten()
+    legend_handles = None
+    for ax, (_, srow) in zip(axes_flat, samples.iterrows()):
         tc_id, library = srow["tc_id"], srow["library"]
         own_refs = lib_of_ref[lib_of_ref == library].index
         own_refs = own_refs.intersection(mat.index)
@@ -136,13 +143,22 @@ def main():
         if len(nonzero):
             ax.hist(nonzero, bins=bins, color="steelblue", label="detected peptides")
         ax.set_xscale("symlog", linthresh=1)
-        ax.set_title(f"{tc_id}\n{n_missing} missing / {len(own_refs)} designed")
+        ax.set_title(f"{tc_id}\n{n_missing} missing / {len(own_refs)} designed", fontsize=9)
         ax.set_xlabel("Reads per peptide")
-        ax.legend(fontsize=7)
-    axes[0].set_ylabel("Number of peptides")
+        if legend_handles is None:
+            legend_handles, _ = ax.get_legend_handles_labels()
+    for row in range(nrows):
+        axes_flat[row * ncols].set_ylabel("Number of peptides")
+    for ax in axes_flat[n_samples:]:
+        ax.axis("off")
     fig.suptitle("Per-peptide detection: how many are missing vs. how well are the rest covered?")
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "detection_histogram.png", dpi=150)
+    if legend_handles:
+        fig.legend(handles=legend_handles, loc="center left", bbox_to_anchor=(1.0, 0.5), borderaxespad=0, fontsize=9)
+    # rect leaves headroom above the top row of subplot titles for the
+    # suptitle -- tight_layout() doesn't know about the suptitle otherwise
+    # and the two overlap.
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(FIG_DIR / "detection_histogram.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     print(f"Wrote coverage_bar.png, rarefaction_curves.png, detection_histogram.png to {FIG_DIR}", file=sys.stderr)

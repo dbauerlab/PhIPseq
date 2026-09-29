@@ -1,0 +1,33 @@
+sample,ip,treatment
+PhIP_Seq1_5,IP4,Vir3 only
+PhIP_Seq1_6,IP4,Vir3 only
+PhIP_Seq1_7,IP5,Vir3 only
+PhIP_Seq1_8,IP5,Vir3 only
+PhIP_Seq1_9,IP4,Phage & beads
+PhIP_Seq1_10,IP4,Phage & beads
+PhIP_Seq1_11,IP5,Phage & beads
+PhIP_Seq1_12,IP5,Phage & beads
+PhIP_Seq1_13,IP4,IVIG 2ug
+PhIP_Seq1_14,IP4,IVIG 2ug
+PhIP_Seq1_15,IP5,IVIG 2ug
+PhIP_Seq1_16,IP5,IVIG 2ug
+PhIP_Seq1_17,IP4,Serum 2%
+PhIP_Seq1_18,IP4,Serum 2%
+PhIP_Seq1_19,IP4,12CA5 2ug
+PhIP_Seq1_20,IP4,12CA5 2ug
+PhIP_Seq1_21,IP4,TVG271 2ug
+PhIP_Seq1_22,IP4,TVG271 2ug
+PhIP_Seq1_23,IP5,TVG271 2ug
+PhIP_Seq1_24,IP5,TVG271 2ug
+PhIP_Seq1_25,IP5,Cles purif 0.056ug
+PhIP_Seq1_26,IP5,Cles purif 0.056ug
+PhIP_Seq1_27,IP5,Sotro purif 0.056ug
+PhIP_Seq1_28,IP5,Sotro purif 0.056ug
+PhIP_Seq1_29,IP5,Nirsevimab s/n 0.56ug
+PhIP_Seq1_30,IP5,Nirsevimab s/n 0.56ug
+PhIP_Seq1_31,IP5,PE 2ug
+PhIP_Seq1_32,IP5,PE 2ug
+PhIP_Seq1_33,IP5,B17 s/n 0.56
+PhIP_Seq1_34,IP5,B17 s/n 0.56
+PhIP_Seq1_35,IP4,Serum 0.125%
+PhIP_Seq1_36,IP4,Serum 0.125%
