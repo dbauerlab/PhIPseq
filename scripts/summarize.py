@@ -381,11 +381,13 @@ def main():
     lines.append("")
     lines.append(qc.to_markdown(index=False, floatfmt=".3f"))
     lines.append("")
+    lines.append("Top most abundant peptides per sample: [top_abundant_peptides.csv](top_abundant_peptides.csv)")
+    lines.append("")
     figure_names = ["rank_abundance", "lorenz_curves"]
     figure_names += [f"batch_correlation_{lib}" for lib in samples["library"].unique()]
     figure_names += ["shannon_entropy"] + (["pca_samples"] if scores is not None else [])
     figure_names += ["coverage_bar", "rarefaction_curves", "detection_histogram", "evenness_summary",
-                     "overview_all_samples"]
+                     "overview_all_samples", "top_variable_heatmap"]
     for group in groups:
         lines.append(f"## Figures{group['title_suffix']}")
         lines.append("")

@@ -59,11 +59,12 @@ PhIPseq/
 │   ├── run_sample.sh              # per-sample: merge lanes -> cutadapt (paired) -> bowtie2 (paired) -> counts (written to run_dir)
 │   ├── run_sample.sbatch          # SLURM array job wrapping run_sample.sh, one task per sample
 │   ├── build_index.sbatch         # SLURM job: bowtie2-build the combined index (written to run_dir)
-│   ├── summarize.sbatch           # SLURM job: summarize.py + the three figure scripts
+│   ├── summarize.sbatch           # SLURM job: summarize.py + the four figure/table scripts
 │   ├── summarize.py               # count matrix + qc_summary.csv + core figures + summary.md (written to run_dir)
 │   ├── completeness_figures.py    # coverage / rarefaction / detection-histogram figures
 │   ├── evenness_summary_figure.py # per-sample evenness figure
 │   ├── overview_figure.py         # combined coverage+evenness overview figure
+│   ├── top_peptides.py            # top-N most variable peptides heatmap + top-N most abundant peptides tables
 │   └── sample_groups.py           # shared: sample sheet + metadata merge, treatment colours, all/per-IP figure groups
 ├── reference/                     # hand-maintained config, tracked in the repo
 │   ├── paths.json                 # external file locations + run_dir -- placeholders
@@ -82,6 +83,7 @@ PhIPseq/
 │   └── results/
 │       ├── <tc_id>/                  # per-sample counts.tsv, cutadapt.log, bowtie2.log
 │       ├── count_matrix.csv, qc_summary.csv, summary.md
+│       ├── top_abundant_peptides.csv, top_abundant_peptides_wide.csv
 │       └── figures/                  # PNG figures, all samples
 │           └── <ip>/                 # same figures, one folder per IP condition (IP4/, IP5/)
 ├── results/                        # PRE-MIGRATION output, checked into the repo -- see note above; not written to by current scripts
@@ -145,7 +147,9 @@ checkout):
 - **`reference/figure_params.json`** — figure tunables shared by all four
   figure scripts: `outlier_threshold`, `legend_bbox_anchor`,
   `xtick_rotation`, `heatmap_tick_fontsize`, `detection_histogram_ncols`,
-  `pca_n_top_variable_peptides`, and an optional `treatment_colors`
+  `pca_n_top_variable_peptides`, `heatmap_n_top_variable_peptides`
+  (default `100`), `top_abundant_n_peptides` (default `20`), and an
+  optional `treatment_colors`
   object (`{"<treatment>": "<matplotlib colour>"}`) overriding individual
   entries of the default treatment palette.
 - **`reference/hpc_modules.json`** — exact `cutadapt`/`bowtie2`/`samtools`
@@ -702,6 +706,33 @@ override it at submission time.
   (as for `summarize.py`); no other tunables exposed (rarefaction depth
   range is computed from each sample's own total read-pair count).
 - Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg`), `scipy.special.gammaln`.
+
+### top_peptides.py
+- Purpose: peptide-level views of the count matrix — which peptides
+  differ most between samples, and which dominate each sample.
+- Inputs: `reference/samples.tsv` and `reference/samples_meta.csv` (or
+  first/second CLI args); `<run_dir>/reference/combined_metadata.csv`;
+  `<run_dir>/results/count_matrix.csv`; `reference/figure_params.json`
+  (`heatmap_n_top_variable_peptides`, `top_abundant_n_peptides`).
+- Outputs:
+  - `top_variable_heatmap.png` in `<run_dir>/results/figures/` and each
+    `<run_dir>/results/figures/<ip>/` — the top N (default 100) peptides by
+    variance of log10(CPM + 1) *within that group's samples* (so each IP
+    picks its own top N), rows hierarchically clustered (average linkage),
+    columns in treatment order under a treatment colour strip, rows
+    labelled `source_id | organism | protein start-end` (shortened).
+  - `<run_dir>/results/top_abundant_peptides.csv` — long format, one row
+    per sample x rank (top N, default 20): `tc_id`, `ip`, `treatment`,
+    `rank`, `ref_id`, `peptide_label`, `read_pairs`, `cpm`,
+    `fraction_of_sample_reads`, full `organism`/`protein_name`,
+    `start`/`end`, `peptide_aa`.
+  - `<run_dir>/results/top_abundant_peptides_wide.csv` — the same as a
+    rank x sample grid of `peptide_label`s.
+- Counts are CPM-normalised per sample (over its own library's peptides)
+  first, since sequencing depth differs several-fold between samples.
+  Expects all samples to share one library.
+- Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg`),
+  `scipy.cluster.hierarchy`.
 
 ### evenness_summary_figure.py
 - Purpose: one figure summarizing per-sample library evenness (10th-90th

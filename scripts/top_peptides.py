@@ -1,0 +1,175 @@
+"""Peptide-level views of the count matrix:
+  1. top_variable_heatmap.png -- the N most variable peptides (by variance
+     of log10(CPM + 1) across the group's samples), rows clustered,
+     columns in treatment order with a treatment colour strip. Drawn once
+     for all samples (results/figures/) and once per IP condition
+     (results/figures/<ip>/, see sample_groups.py), each group picking its
+     own top N.
+  2. results/top_abundant_peptides.csv -- the N most abundant peptides in
+     each sample (long format: one row per sample x rank), with read-pair
+     count, CPM, fraction of the sample's reads and peptide annotation;
+     results/top_abundant_peptides_wide.csv -- the same as a rank x sample
+     grid of short peptide labels, for scanning by eye.
+
+Counts are CPM-normalised (per sample, over its own library's peptides)
+before either step, since sequencing depth differs several-fold between
+samples.
+
+Usage: top_peptides.py [samples_tsv] [samples_meta_csv]
+  (default to reference/samples.tsv and reference/samples_meta.csv)
+"""
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.cluster.hierarchy import leaves_list, linkage
+
+from sample_groups import figure_groups, load_samples, sample_label, treatment_legend_handles
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+
+# run_dir (where results/ and generated reference data live) is configured
+# in reference/paths.json, a hand-maintained config file kept in the repo
+# checkout -- separate from run_dir itself.
+_paths = json.loads((PROJECT_DIR / "reference" / "paths.json").read_text())
+RUN_DIR = Path(_paths["run_dir"])
+RESULTS_DIR = RUN_DIR / "results"
+FIG_DIR = RESULTS_DIR / "figures"
+META_CSV = RUN_DIR / "reference" / "combined_metadata.csv"
+
+_fig_params = json.loads((PROJECT_DIR / "reference" / "figure_params.json").read_text())
+N_TOP_VARIABLE = _fig_params["heatmap_n_top_variable_peptides"]
+N_TOP_ABUNDANT = _fig_params["top_abundant_n_peptides"]
+HEATMAP_TICK_FONTSIZE = _fig_params["heatmap_tick_fontsize"]
+
+ROW_LABEL_FONTSIZE = 7
+ROW_HEIGHT_IN = 0.14  # per peptide row: keeps ROW_LABEL_FONTSIZE labels from overlapping
+COL_WIDTH_IN = 0.35
+
+
+def short_name(text, max_len):
+    """Annotation trimmed for an axis label: drop parenthesised synonyms /
+    EC numbers, underscores -> spaces, then truncate."""
+    if not isinstance(text, str) or not text:
+        return "unknown"
+    text = text.replace("_", " ").split(" (")[0].strip()
+    return text if len(text) <= max_len else text[:max_len - 1] + "…"
+
+
+def peptide_label(ann):
+    """Short one-line peptide label, shared by the heatmap rows and the tables."""
+    return (f"{ann['source_id']} | {short_name(ann['organism'], 32)} | "
+            f"{short_name(ann['protein_name'], 24)} {ann['start']}-{ann['end']}")
+
+
+def peptide_labels(meta, ref_ids):
+    return [peptide_label(meta.loc[ref_id]) for ref_id in ref_ids]
+
+
+def cpm_matrix(mat, lib_of_ref, samples):
+    """Counts per million over each sample's own library's peptides; all
+    samples here share one library, so this is one peptides x samples
+    frame (other-library peptides dropped)."""
+    libraries = samples["library"].unique()
+    if len(libraries) != 1:
+        sys.exit(f"ERROR: top_peptides.py expects samples from one library, got {', '.join(libraries)}")
+    own_refs = lib_of_ref[lib_of_ref == libraries[0]].index.intersection(mat.index)
+    sub = mat.loc[own_refs, samples["tc_id"]]
+    return sub / sub.sum(axis=0) * 1e6
+
+
+def plot_top_variable_heatmap(log_cpm, meta, group, colors):
+    samples = group["samples"]
+    sub = log_cpm[samples["tc_id"]]
+    top = sub.loc[sub.var(axis=1).sort_values(ascending=False).head(N_TOP_VARIABLE).index]
+    if len(top) > 2:
+        top = top.iloc[leaves_list(linkage(top.to_numpy(), method="average", metric="euclidean",
+                                           optimal_ordering=True))]
+    n_rows, n_cols = top.shape
+
+    fig, ax = plt.subplots(figsize=(COL_WIDTH_IN * n_cols + 7, ROW_HEIGHT_IN * n_rows + 3))
+    im = ax.imshow(top.to_numpy(), aspect="auto", cmap="viridis", interpolation="nearest")
+    ax.set_xticks(range(n_cols))
+    ax.set_xticklabels([sample_label(srow, group) for _, srow in samples.iterrows()],
+                       rotation=90, fontsize=HEATMAP_TICK_FONTSIZE * 0.75)
+    ax.set_yticks(range(n_rows))
+    ax.set_yticklabels(peptide_labels(meta, top.index), fontsize=ROW_LABEL_FONTSIZE)
+    ax.yaxis.tick_right()
+
+    divider = make_axes_locatable(ax)
+    ax_top = divider.append_axes("top", size=0.25, pad=0.05, sharex=ax)
+    strip = np.array([mcolors.to_rgba(colors[t]) for t in samples["treatment"]])
+    ax_top.imshow(strip[np.newaxis, :, :], aspect="auto")
+    ax_top.set_yticks([])
+    ax_top.tick_params(axis="x", bottom=False, labelbottom=False)
+    ax_top.set_title(f"Top {n_rows} most variable peptides{group['title_suffix']}\n"
+                     "(variance of log10(CPM + 1); rows clustered)", fontsize=11)
+
+    cax = divider.append_axes("left", size=0.2, pad=0.6)
+    fig.colorbar(im, cax=cax, label="log10(CPM + 1)")
+    cax.yaxis.set_ticks_position("left")
+    cax.yaxis.set_label_position("left")
+    # below the sample tick labels, clear of the long peptide labels on the right
+    ax.legend(handles=treatment_legend_handles(samples, colors)[1:], title="treatment", loc="upper center",
+              bbox_to_anchor=(0.5, -0.02 - 2.2 / fig.get_figheight()), ncol=3, fontsize=9)
+    fig.savefig(group["fig_dir"] / "top_variable_heatmap.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Wrote {group['fig_dir'] / 'top_variable_heatmap.png'}", file=sys.stderr)
+
+
+def top_abundant_table(mat, cpm, meta, samples):
+    rows = []
+    for _, srow in samples.iterrows():
+        tc_id = srow["tc_id"]
+        top = cpm[tc_id].sort_values(ascending=False).head(N_TOP_ABUNDANT)
+        for rank, (ref_id, sample_cpm) in enumerate(top.items(), start=1):
+            ann = meta.loc[ref_id]
+            rows.append({
+                "tc_id": tc_id,
+                "ip": srow["ip"],
+                "treatment": srow["treatment"],
+                "rank": rank,
+                "ref_id": ref_id,
+                "peptide_label": peptide_label(ann),
+                "read_pairs": int(mat.at[ref_id, tc_id]),
+                "cpm": sample_cpm,
+                "fraction_of_sample_reads": sample_cpm / 1e6,
+                "organism": ann["organism"],
+                "protein_name": ann["protein_name"],
+                "start": ann["start"],
+                "end": ann["end"],
+                "peptide_aa": ann["peptide_aa"],
+            })
+    return pd.DataFrame(rows)
+
+
+def main():
+    samples, colors = load_samples()
+    meta = pd.read_csv(META_CSV, dtype=str).set_index("ref_id")
+    lib_of_ref = meta["library"]
+    mat = pd.read_csv(RESULTS_DIR / "count_matrix.csv", index_col=0)
+
+    cpm = cpm_matrix(mat, lib_of_ref, samples)
+    log_cpm = np.log10(cpm + 1)
+    for group in figure_groups(samples, FIG_DIR):
+        plot_top_variable_heatmap(log_cpm, meta, group, colors)
+
+    table = top_abundant_table(mat, cpm, meta, samples)
+    out = RESULTS_DIR / "top_abundant_peptides.csv"
+    table.to_csv(out, index=False)
+    wide = table.pivot(index="rank", columns="tc_id", values="peptide_label")[samples["tc_id"]]
+    wide.columns = [f"{srow['ip']} {srow['treatment']} {srow['tc_id']}" for _, srow in samples.iterrows()]
+    wide.to_csv(RESULTS_DIR / "top_abundant_peptides_wide.csv")
+    print(f"Wrote {out} and {RESULTS_DIR / 'top_abundant_peptides_wide.csv'}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

@@ -33,8 +33,8 @@ PROJECT_DIR="${PHIPSEQ_REPO_DIR:?Set PHIPSEQ_REPO_DIR to the repo checkout path 
 eval "$(conda shell.bash hook)"
 conda activate phipseq
 
-# These four don't depend on each other (summarize.py must run first to
-# produce count_matrix.csv; the other three only read it), so running them
+# These five don't depend on each other (summarize.py must run first to
+# produce count_matrix.csv; the other four only read it), so running them
 # sequentially in one job is simplest -- nothing in the pipeline suggests
 # splitting them into separate parallel jobs would be worth the added
 # complexity.
@@ -42,3 +42,4 @@ python "$PROJECT_DIR/scripts/summarize.py"
 python "$PROJECT_DIR/scripts/completeness_figures.py"
 python "$PROJECT_DIR/scripts/evenness_summary_figure.py"
 python "$PROJECT_DIR/scripts/overview_figure.py"
+python "$PROJECT_DIR/scripts/top_peptides.py"

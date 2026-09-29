@@ -4,5 +4,7 @@
   "xtick_rotation": 90,
   "heatmap_tick_fontsize": 12,
   "detection_histogram_ncols": 4,
-  "pca_n_top_variable_peptides": 5000
+  "pca_n_top_variable_peptides": 5000,
+  "heatmap_n_top_variable_peptides": 100,
+  "top_abundant_n_peptides": 20
 }
