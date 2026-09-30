@@ -7,8 +7,13 @@ cutadapt/bowtie2 pipeline) + its cutadapt.log/bowtie2.log,
 <run_dir>/reference/combined_metadata.csv, and the per-sample metadata
 sheet (reference/samples_meta.csv by default: sample, ip, treatment).
 Figures are coloured by treatment and drawn once for all samples and
-once per IP condition (see sample_groups.py). Writes, all under <run_dir>:
-  results/count_matrix.csv
+once per IP condition (see sample_groups.py). Low-count filtering (see
+count_filters.py): QC coverage columns are reported at >=1 read and at
+coverage_min_count reads; PCA and correlation heatmaps use the
+row-filtered matrix. Writes, all under <run_dir>:
+  results/count_matrix.csv          (raw, unfiltered)
+  results/count_matrix_filtered.csv (peptides passing the matrix filter)
+  results/filter_report.csv         (per-sample reads removed by it)
   results/qc_summary.csv
   results/figures/*.png        (all samples)
   results/figures/<ip>/*.png   (one folder per IP condition)
@@ -34,6 +39,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+from count_filters import COVERAGE_MIN_COUNT, FILTER_DESCRIPTION, filter_matrix
 from sample_groups import (LINESTYLE_CYCLE, MARKER_CYCLE, figure_groups, legend_outside, load_samples,
                            sample_label, style_legend_handles, style_map, treatment_legend_handles)
 
@@ -229,7 +235,7 @@ def plot_batch_correlation(mat, lib_of_ref, group, colors):
     """Pearson correlation heatmap of log1p counts, per library, with
     treatment colour strips along the top and left edges."""
     for library, sub_samples in group["samples"].groupby("library", sort=False):
-        own_refs = lib_of_ref[lib_of_ref == library].index
+        own_refs = lib_of_ref[lib_of_ref == library].index.intersection(mat.index)
         tc_ids = sub_samples["tc_id"].tolist()
         labels = [sample_label(srow, group) for _, srow in sub_samples.iterrows()]
         n = len(tc_ids)
@@ -257,7 +263,8 @@ def plot_batch_correlation(mat, lib_of_ref, group, colors):
         ax_left.set_xticks([])
         ax_top.set_yticks([])
         ax_top.tick_params(axis="x", bottom=False, labelbottom=False)
-        ax_top.set_title(f"{library} batch correlation (log1p read-pair counts){group['title_suffix']}")
+        ax_top.set_title(f"{library} batch correlation{group['title_suffix']}\n"
+                         f"(log1p read-pair counts; peptides with {FILTER_DESCRIPTION})")
         fig.colorbar(im, cax=cax)
         # anchored to the colorbar (in its axes units) so it sits just past the colorbar's tick labels
         cax.legend(handles=treatment_legend_handles(sub_samples, colors), loc="center left",
@@ -298,7 +305,8 @@ def plot_pca(scores, explained_var, samples, group, colors, limits):
     ax.set_xlabel(f"PC1 ({explained_var[0]:.1%} variance)")
     ax.set_ylabel(f"PC2 ({explained_var[1]:.1%} variance)" if len(explained_var) > 1 else "PC2")
     ax.set_title(f"PCA of samples{group['title_suffix']}\n(joint PCA of all samples: top "
-                 f"{PCA_N_TOP_VARIABLE_PEPTIDES} variable, shared-detected peptides)", fontsize=10)
+                 f"{PCA_N_TOP_VARIABLE_PEPTIDES} variable, shared-detected peptides;\n"
+                 f"peptides with {FILTER_DESCRIPTION})", fontsize=10)
     legend_outside(ax, treatment_legend_handles(group["samples"], colors, kind="marker")
                    + style_legend_handles(group, markers, kind="marker"), fontsize=8)
     fig.savefig(group["fig_dir"] / "pca_samples.png", dpi=150, bbox_inches="tight")
@@ -316,6 +324,13 @@ def main():
     mat.to_csv(RESULTS_DIR / "count_matrix.csv")
 
     lib_of_ref = meta.set_index("ref_id")["library"]
+
+    # Between-sample analyses (PCA, correlation, top_peptides.py) use the
+    # row-filtered matrix; library-completeness metrics below use the raw one.
+    mat_filtered, filter_report, filter_library_report = filter_matrix(mat, lib_of_ref)
+    mat_filtered.to_csv(RESULTS_DIR / "count_matrix_filtered.csv")
+    filter_report.to_csv(RESULTS_DIR / "filter_report.csv", index=False)
+    print(f"Matrix filter ({FILTER_DESCRIPTION}):\n{filter_library_report.to_string()}", file=sys.stderr)
 
     qc_rows = []
     for _, srow in samples.iterrows():
@@ -347,6 +362,8 @@ def main():
             "n_peptides_detected": int((own_counts > 0).sum()),
             "pct_library_covered": (own_counts > 0).mean(),
             "n_dropouts": int((own_counts == 0).sum()),
+            f"n_peptides_detected_min{COVERAGE_MIN_COUNT}": int((own_counts >= COVERAGE_MIN_COUNT).sum()),
+            f"pct_library_covered_min{COVERAGE_MIN_COUNT}": (own_counts >= COVERAGE_MIN_COUNT).mean(),
             "median_count_detected": own_counts[own_counts > 0].median(),
             "gini_own_library": gini(own_counts.values),
             "shannon_entropy": entropy,
@@ -359,7 +376,7 @@ def main():
 
     # --- Figures: all samples, then one set per IP condition ---
     groups = figure_groups(samples, FIG_DIR)
-    scores, explained_var = compute_pca(mat, samples["tc_id"].tolist())
+    scores, explained_var = compute_pca(mat_filtered, samples["tc_id"].tolist())
     if scores is None:
         print("Skipping PCA figure: fewer than 2 peptides detected in every sample, or fewer than 2 samples.",
               file=sys.stderr)
@@ -370,7 +387,7 @@ def main():
     for group in groups:
         plot_rank_abundance(mat, lib_of_ref, group, colors)
         plot_lorenz(mat, lib_of_ref, group, colors)
-        plot_batch_correlation(mat, lib_of_ref, group, colors)
+        plot_batch_correlation(mat_filtered, lib_of_ref, group, colors)
         plot_shannon(qc, group, colors)
         if scores is not None:
             plot_pca(scores, explained_var, samples, group, colors, pca_limits)
@@ -383,10 +400,22 @@ def main():
     lines.append("")
     lines.append("Top most abundant peptides per sample: [top_abundant_peptides.csv](top_abundant_peptides.csv)")
     lines.append("")
+    lines.append("## Low-count filtering")
+    lines.append("")
+    lines.append(f"- Coverage: `*_min{COVERAGE_MIN_COUNT}` QC columns and the solid coverage bars count a peptide as "
+                 f"detected only with >= {COVERAGE_MIN_COUNT} reads; the denominator is always the full designed "
+                 f"library. Rank-abundance, Lorenz, Shannon entropy and evenness use the raw matrix.")
+    lines.append(f"- Matrix filter ({FILTER_DESCRIPTION}), used for PCA, batch correlation and the top-peptide "
+                 f"heatmap/tables: [count_matrix_filtered.csv](count_matrix_filtered.csv), per-sample reads removed "
+                 f"in [filter_report.csv](filter_report.csv).")
+    lines.append("")
+    lines.append(filter_library_report.reset_index().to_markdown(index=False))
+    lines.append("")
     figure_names = ["rank_abundance", "lorenz_curves"]
     figure_names += [f"batch_correlation_{lib}" for lib in samples["library"].unique()]
     figure_names += ["shannon_entropy"] + (["pca_samples"] if scores is not None else [])
-    figure_names += ["coverage_bar", "rarefaction_curves", "detection_histogram", "evenness_summary",
+    figure_names += ["coverage_bar", "rarefaction_curves", f"rarefaction_curves_min{COVERAGE_MIN_COUNT}",
+                     "detection_histogram", "evenness_summary",
                      "overview_all_samples", "top_variable_heatmap"]
     for group in groups:
         lines.append(f"## Figures{group['title_suffix']}")

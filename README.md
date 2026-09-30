@@ -65,12 +65,14 @@ PhIPseq/
 │   ├── evenness_summary_figure.py # per-sample evenness figure
 │   ├── overview_figure.py         # combined coverage+evenness overview figure
 │   ├── top_peptides.py            # top-N most variable peptides heatmap + top-N most abundant peptides tables
-│   └── sample_groups.py           # shared: sample sheet + metadata merge, treatment colours, all/per-IP figure groups
+│   ├── sample_groups.py           # shared: sample sheet + metadata merge, treatment colours, all/per-IP figure groups
+│   └── count_filters.py           # shared: low-count coverage threshold + count-matrix row filter
 ├── reference/                     # hand-maintained config, tracked in the repo
 │   ├── paths.json                 # external file locations + run_dir -- placeholders
 │   ├── run_params.json            # LANES, BOWTIE_THREADS, CUTADAPT_THREADS
 │   ├── build_reference_params.json# vector anchor sequences, minimum Vir3 insert length
 │   ├── figure_params.json         # outlier threshold, legend/tick layout, PCA size, optional treatment_colors
+│   ├── filter_params.json         # low-count filtering thresholds (coverage threshold, matrix filter)
 │   ├── hpc_modules.json           # pinned cutadapt/bowtie2/samtools HPC module versions
 │   ├── adapters.json              # per-library R1/R2 constant adapter sequences (hand-maintained)
 │   ├── samples.tsv                # sample sheet: tc_id, library, sample_prefix
@@ -83,6 +85,7 @@ PhIPseq/
 │   └── results/
 │       ├── <tc_id>/                  # per-sample counts.tsv, cutadapt.log, bowtie2.log
 │       ├── count_matrix.csv, qc_summary.csv, summary.md
+│       ├── count_matrix_filtered.csv, filter_report.csv
 │       ├── top_abundant_peptides.csv, top_abundant_peptides_wide.csv
 │       └── figures/                  # PNG figures, all samples
 │           └── <ip>/                 # same figures, one folder per IP condition (IP4/, IP5/)
@@ -172,6 +175,38 @@ checkout):
   aggregation/figure scripts (overridable as their second CLI argument);
   they exit with an error naming any `samples.tsv` sample missing an
   `ip`/`treatment`. Rows for samples not in `samples.tsv` are ignored.
+
+- **`reference/filter_params.json`** — low-count filtering, see
+  [Low-count filtering](#low-count-filtering): `coverage_min_count`
+  (default `10`), `matrix_filter_min_count` (default `10`),
+  `matrix_filter_min_samples` (default `2`).
+
+### Low-count filtering
+
+`scripts/count_filters.py` applies two deliberately separate filters:
+
+- **Coverage threshold (`coverage_min_count`)** — for library-completeness
+  metrics a peptide counts as detected only with >= this many reads. It is
+  reported *alongside* the >=1-read metrics, never instead of them:
+  `n_peptides_detected_min10` / `pct_library_covered_min10` in
+  `qc_summary.csv`, solid (>=10) over light (>=1) bars in `coverage_bar.png`
+  and `overview_all_samples.png`, `rarefaction_curves_min10.png` (binomial
+  thinning approximation), and a shaded 1-9-read band in
+  `detection_histogram.png`. The count matrix is not changed and the
+  denominator is always the full designed library.
+- **Matrix filter (`matrix_filter_min_count` in >= `matrix_filter_min_samples`
+  samples)** — whole peptides (rows) failing it are dropped, so there are
+  no NAs; `min_samples = 2` matches the replicate count, so a peptide
+  consistently seen in one condition's replicates is kept without needing
+  group labels. Written to `count_matrix_filtered.csv` (per-sample reads
+  removed in `filter_report.csv`) and used by the between-sample analyses
+  only: PCA, batch correlation, and `top_peptides.py` (whose CPM still uses
+  each sample's raw read total). It is never used for coverage — the
+  dropped rows are by definition the undetected ones, so coverage over the
+  kept rows would be inflated.
+- Rank-abundance, Lorenz, Shannon entropy and evenness still use the raw
+  matrix (evenness already calls out <=10-read peptides explicitly via
+  `outlier_threshold`).
 
 ### Figure groups and colouring
 
@@ -630,8 +665,11 @@ override it at submission time.
   `run_sample.sh`). `run_dir` resolved from `reference/paths.json`.
 - Outputs: `<run_dir>/results/count_matrix.csv` (downstream consumers:
   `completeness_figures.py`, `evenness_summary_figure.py`,
-  `overview_figure.py`); `<run_dir>/results/qc_summary.csv` (includes
-  `ip`/`treatment` columns); `rank_abundance.png`, `lorenz_curves.png`,
+  `overview_figure.py`); `<run_dir>/results/count_matrix_filtered.csv` and
+  `filter_report.csv` (matrix filter, see
+  [Low-count filtering](#low-count-filtering));
+  `<run_dir>/results/qc_summary.csv` (includes `ip`/`treatment` columns and
+  the `*_min10` coverage-threshold columns); `rank_abundance.png`, `lorenz_curves.png`,
   `batch_correlation_<library>.png` (one per library),
   `shannon_entropy.png`, `pca_samples.png` in
   `<run_dir>/results/figures/` and each `<run_dir>/results/figures/<ip>/`
@@ -686,7 +724,7 @@ override it at submission time.
   `<run_dir>/results/count_matrix.csv` (from `summarize.py`). `run_dir`
   resolved from `reference/paths.json`.
 - Outputs: `coverage_bar.png`, `rarefaction_curves.png`,
-  `detection_histogram.png` in `<run_dir>/results/figures/` and each
+  `rarefaction_curves_min10.png`, `detection_histogram.png` in `<run_dir>/results/figures/` and each
   `<run_dir>/results/figures/<ip>/`, coloured by treatment. Terminal
   outputs, for human review (embedded by path in `summary.md`).
 - Key steps:
@@ -712,7 +750,8 @@ override it at submission time.
   differ most between samples, and which dominate each sample.
 - Inputs: `reference/samples.tsv` and `reference/samples_meta.csv` (or
   first/second CLI args); `<run_dir>/reference/combined_metadata.csv`;
-  `<run_dir>/results/count_matrix.csv`; `reference/figure_params.json`
+  `<run_dir>/results/count_matrix_filtered.csv` (plus `count_matrix.csv`
+  for per-sample read totals); `reference/figure_params.json`
   (`heatmap_n_top_variable_peptides`, `top_abundant_n_peptides`).
 - Outputs:
   - `top_variable_heatmap.png` in `<run_dir>/results/figures/` and each

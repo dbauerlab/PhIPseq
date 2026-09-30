@@ -1,0 +1,5 @@
+{
+  "coverage_min_count": 10,
+  "matrix_filter_min_count": 10,
+  "matrix_filter_min_samples": 2
+}

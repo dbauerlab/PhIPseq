@@ -1,5 +1,6 @@
 """One combined figure comparing samples together: coverage (%% of
-designed peptides detected) and evenness (typical range + near-dropout
+designed peptides detected at >=1 read and at >= coverage_min_count reads,
+see count_filters.py) and evenness (typical range + near-dropout
 outliers) side by side, coloured by treatment. Drawn once for all samples
 (results/figures/) and once per IP condition (results/figures/<ip>/, see
 sample_groups.py).
@@ -18,7 +19,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
+from count_filters import COVERAGE_MIN_COUNT
 from sample_groups import figure_groups, legend_outside, load_samples, sample_label, treatment_legend_handles
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -58,11 +61,14 @@ def plot_overview(mat, lib_of_ref, group, colors):
         counts = mat.loc[own_refs, tc_id]
         total = len(own_refs)
         detected = counts[counts > 0]
+        n_min = int((counts >= COVERAGE_MIN_COUNT).sum())
         pct = 100 * len(detected) / total if total else 0
+        pct_min = 100 * n_min / total if total else 0
 
-        # --- coverage panel ---
-        ax_cov.bar(i, pct, color=color, edgecolor="black", linewidth=0.5)
-        ax_cov.text(i, pct + 1.5, f"{len(detected)}/{total}", ha="center", va="bottom", fontsize=8)
+        # --- coverage panel: light bar >=1 read, solid bar >= COVERAGE_MIN_COUNT reads ---
+        ax_cov.bar(i, pct, color=color, alpha=0.35, edgecolor="black", linewidth=0.5)
+        ax_cov.bar(i, pct_min, color=color, edgecolor="black", linewidth=0.5)
+        ax_cov.text(i, pct + 1.5, f"{n_min}", ha="center", va="bottom", rotation=90, fontsize=7)
 
         # --- evenness panel ---
         outliers = detected[detected <= OUTLIER_THRESHOLD]
@@ -83,12 +89,16 @@ def plot_overview(mat, lib_of_ref, group, colors):
         cov_labels.append(label)
         even_labels.append(label + (" (" + ", ".join(extra_bits) + ")" if extra_bits else ""))
 
-    ax_cov.set_ylim(0, 108)
+    ax_cov.set_ylim(0, 125)
     ax_cov.set_xticks(range(len(samples)))
     ax_cov.set_xticklabels(cov_labels, rotation=XTICK_ROTATION, ha="center")
     ax_cov.set_ylabel("% of designed peptides detected")
-    ax_cov.set_title("Coverage")
-    legend_outside(ax_cov, treatment_legend_handles(samples, colors), fontsize=8)
+    ax_cov.set_title(f"Coverage (bar labels: peptides with >= {COVERAGE_MIN_COUNT} reads, of {total} designed)")
+    legend_outside(ax_cov, treatment_legend_handles(samples, colors) + [
+        Line2D([], [], linestyle="", label="— detected at —"),
+        Patch(facecolor="gray", alpha=0.35, edgecolor="black", label=">= 1 read"),
+        Patch(facecolor="gray", edgecolor="black", label=f">= {COVERAGE_MIN_COUNT} reads"),
+    ], fontsize=8)
 
     ax_even.set_yscale("log")
     ax_even.set_xlim(-0.6, len(samples) - 0.4)

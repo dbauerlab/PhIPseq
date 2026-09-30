@@ -11,8 +11,10 @@
      results/top_abundant_peptides_wide.csv -- the same as a rank x sample
      grid of short peptide labels, for scanning by eye.
 
-Counts are CPM-normalised (per sample, over its own library's peptides)
-before either step, since sequencing depth differs several-fold between
+Both use the row-filtered matrix (count_matrix_filtered.csv, see
+count_filters.py). Counts are CPM-normalised first -- per sample, against
+its full own-library read total from the raw matrix, so CPM means the same
+as before filtering -- since sequencing depth differs several-fold between
 samples.
 
 Usage: top_peptides.py [samples_tsv] [samples_meta_csv]
@@ -32,6 +34,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.cluster.hierarchy import leaves_list, linkage
 
+from count_filters import FILTER_DESCRIPTION
 from sample_groups import figure_groups, load_samples, sample_label, treatment_legend_handles
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -74,16 +77,17 @@ def peptide_labels(meta, ref_ids):
     return [peptide_label(meta.loc[ref_id]) for ref_id in ref_ids]
 
 
-def cpm_matrix(mat, lib_of_ref, samples):
-    """Counts per million over each sample's own library's peptides; all
-    samples here share one library, so this is one peptides x samples
-    frame (other-library peptides dropped)."""
+def cpm_matrix(mat_filtered, mat_raw, lib_of_ref, samples):
+    """Counts per million for the filtered matrix's own-library peptides,
+    scaled by each sample's raw own-library read total; all samples here
+    share one library, so this is one peptides x samples frame
+    (other-library peptides dropped)."""
     libraries = samples["library"].unique()
     if len(libraries) != 1:
         sys.exit(f"ERROR: top_peptides.py expects samples from one library, got {', '.join(libraries)}")
-    own_refs = lib_of_ref[lib_of_ref == libraries[0]].index.intersection(mat.index)
-    sub = mat.loc[own_refs, samples["tc_id"]]
-    return sub / sub.sum(axis=0) * 1e6
+    own = lib_of_ref[lib_of_ref == libraries[0]].index
+    lib_sizes = mat_raw.loc[own.intersection(mat_raw.index), samples["tc_id"]].sum(axis=0)
+    return mat_filtered.loc[own.intersection(mat_filtered.index), samples["tc_id"]] / lib_sizes * 1e6
 
 
 def plot_top_variable_heatmap(log_cpm, meta, group, colors):
@@ -111,7 +115,8 @@ def plot_top_variable_heatmap(log_cpm, meta, group, colors):
     ax_top.set_yticks([])
     ax_top.tick_params(axis="x", bottom=False, labelbottom=False)
     ax_top.set_title(f"Top {n_rows} most variable peptides{group['title_suffix']}\n"
-                     "(variance of log10(CPM + 1); rows clustered)", fontsize=11)
+                     f"(variance of log10(CPM + 1); rows clustered; peptides with {FILTER_DESCRIPTION})",
+                     fontsize=11)
 
     cax = divider.append_axes("left", size=0.2, pad=0.6)
     fig.colorbar(im, cax=cax, label="log10(CPM + 1)")
@@ -155,9 +160,10 @@ def main():
     samples, colors = load_samples()
     meta = pd.read_csv(META_CSV, dtype=str).set_index("ref_id")
     lib_of_ref = meta["library"]
-    mat = pd.read_csv(RESULTS_DIR / "count_matrix.csv", index_col=0)
+    mat_raw = pd.read_csv(RESULTS_DIR / "count_matrix.csv", index_col=0)
+    mat = pd.read_csv(RESULTS_DIR / "count_matrix_filtered.csv", index_col=0)
 
-    cpm = cpm_matrix(mat, lib_of_ref, samples)
+    cpm = cpm_matrix(mat, mat_raw, lib_of_ref, samples)
     log_cpm = np.log10(cpm + 1)
     for group in figure_groups(samples, FIG_DIR):
         plot_top_variable_heatmap(log_cpm, meta, group, colors)
