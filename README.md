@@ -200,8 +200,9 @@ checkout):
   consistently seen in one condition's replicates is kept without needing
   group labels. Written to `count_matrix_filtered.csv` (per-sample reads
   removed in `filter_report.csv`) and used by the between-sample analyses
-  only: PCA, batch correlation, and `top_peptides.py` (whose CPM still uses
-  each sample's raw read total). It is never used for coverage — the
+  only: batch correlation and `top_peptides.py` (whose CPM still uses each
+  sample's raw read total). The PCA applies the same thresholds *within
+  each figure group* instead (see below). It is never used for coverage — the
   dropped rows are by definition the undetected ones, so coverage over the
   kept rows would be inflated.
 - Rank-abundance, Lorenz, Shannon entropy and evenness still use the raw
@@ -229,8 +230,13 @@ scripts) defines how every figure is drawn:
   column/row order of `count_matrix.csv` and `qc_summary.csv`.
 - Near-dropout markers are black and the "never detected" histogram bin
   dark gray, to stay distinct from the treatment palette.
-- The PCA is computed **once, jointly over all samples**; the per-IP PCA
-  plots show that IP's points on the joint PCA's axes and limits.
+- The PCA is **computed separately for each group** (all samples, each
+  IP): log10(CPM + 1), CPM scaled by each sample's raw read total, over the
+  peptides with >= `matrix_filter_min_count` reads in >=
+  `matrix_filter_min_samples` of *that group's* samples (zeros allowed),
+  top `pca_n_top_variable_peptides` by variance. Each plot has its own
+  axes, so positions are not comparable between groups; scores (PC1-PC5)
+  are written to `pca_scores.csv` in each figures folder.
 
 Every Python script and `run_sample.sh` reads `reference/paths.json`
 relative to the repo checkout (via `Path(__file__).resolve().parent.parent`),
@@ -671,7 +677,7 @@ override it at submission time.
   `<run_dir>/results/qc_summary.csv` (includes `ip`/`treatment` columns and
   the `*_min10` coverage-threshold columns); `rank_abundance.png`, `lorenz_curves.png`,
   `batch_correlation_<library>.png` (one per library),
-  `shannon_entropy.png`, `pca_samples.png` in
+  `shannon_entropy.png`, `pca_samples.png` + `pca_scores.csv` in
   `<run_dir>/results/figures/` and each `<run_dir>/results/figures/<ip>/`
   (see [Figure groups and colouring](#figure-groups-and-colouring));
   `<run_dir>/results/summary.md`.
@@ -699,9 +705,10 @@ override it at submission time.
     that library's samples (batch reproducibility), with treatment colour
     strips along the top and left edges.
   - Plot normalized Shannon entropy per sample.
-  - Compute one joint PCA over all samples (peptides detected in every
-    sample, top `pca_n_top_variable_peptides` by log1p variance) and plot
-    it for all samples and for each IP on the same axes.
+  - For each figure group (all samples, each IP), compute a PCA on that
+    group's samples only: log10(CPM + 1) of the peptides passing the matrix
+    filter thresholds within the group, top `pca_n_top_variable_peptides`
+    by variance; plot it and write the scores to `pca_scores.csv`.
   - Every figure above is drawn for all samples and per IP, coloured by
     treatment.
   - Assemble `summary.md`: the QC table plus one section per figure group
