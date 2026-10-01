@@ -9,9 +9,9 @@ sheet (reference/samples_meta.csv by default: sample, ip, treatment).
 Figures are coloured by treatment and drawn once for all samples and
 once per IP condition (see sample_groups.py). Low-count filtering (see
 count_filters.py): QC coverage columns are reported at >=1 read and at
-coverage_min_count reads; correlation heatmaps use the row-filtered
-matrix; the PCA is computed separately for each figure group on that
-group's own filtered peptides. Writes, all under <run_dir>:
+coverage_min_count reads; the PCA and correlation heatmaps apply the
+matrix filter within each figure group, on that group's samples only.
+Writes, all under <run_dir>:
   results/count_matrix.csv          (raw, unfiltered)
   results/count_matrix_filtered.csv (peptides passing the matrix filter)
   results/filter_report.csv         (per-sample reads removed by it)
@@ -41,8 +41,8 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from count_filters import (COVERAGE_MIN_COUNT, FILTER_DESCRIPTION, MATRIX_FILTER_MIN_COUNT,
-                           MATRIX_FILTER_MIN_SAMPLES, filter_matrix)
+from count_filters import (COVERAGE_MIN_COUNT, FILTER_DESCRIPTION, GROUP_FILTER_DESCRIPTION,
+                           MATRIX_FILTER_MIN_COUNT, MATRIX_FILTER_MIN_SAMPLES, filter_matrix, passes_filter)
 from sample_groups import (LINESTYLE_CYCLE, MARKER_CYCLE, figure_groups, legend_outside, load_samples,
                            sample_label, style_legend_handles, style_map, treatment_legend_handles)
 
@@ -169,15 +169,15 @@ def shannon_entropy(counts, base=2):
 def compute_pca(mat, own_refs, tc_ids):
     """PCA of just these samples (one figure group). Peptides are the
     group's own library peptides passing the matrix filter *within the
-    group* (>= MATRIX_FILTER_MIN_COUNT reads in >= MATRIX_FILTER_MIN_SAMPLES
-    of these samples; zeros allowed), in log10(CPM + 1) -- CPM scaled by
+    group* (count_filters.passes_filter on these samples; zeros allowed),
+    in log10(CPM + 1) -- CPM scaled by
     each sample's raw own-library read total, since depth varies several-
     fold -- then the top N most variable, mean-centered per peptide.
     Returns (scores, explained_var, n_peptides_eligible), or None if there
     isn't enough signal to run PCA on."""
     sub = mat.loc[own_refs, tc_ids]
     cpm = sub / sub.sum(axis=0) * 1e6
-    keep = (sub >= MATRIX_FILTER_MIN_COUNT).sum(axis=1) >= MATRIX_FILTER_MIN_SAMPLES
+    keep = passes_filter(sub)
     if keep.sum() < 2 or len(tc_ids) < 3:
         return None
     log_cpm = np.log10(cpm.loc[keep] + 1)
@@ -238,14 +238,17 @@ def plot_lorenz(mat, lib_of_ref, group, colors):
 
 
 def plot_batch_correlation(mat, lib_of_ref, group, colors):
-    """Pearson correlation heatmap of log1p counts, per library, with
+    """Pearson correlation heatmap of log1p counts, per library, over the
+    peptides passing the matrix filter within this group's samples, with
     treatment colour strips along the top and left edges."""
     for library, sub_samples in group["samples"].groupby("library", sort=False):
         own_refs = lib_of_ref[lib_of_ref == library].index.intersection(mat.index)
         tc_ids = sub_samples["tc_id"].tolist()
         labels = [sample_label(srow, group) for _, srow in sub_samples.iterrows()]
         n = len(tc_ids)
-        corr = np.log1p(mat.loc[own_refs, tc_ids]).corr(method="pearson")
+        sub = mat.loc[own_refs, tc_ids]
+        sub = sub.loc[passes_filter(sub)]
+        corr = np.log1p(sub).corr(method="pearson")
 
         fig, ax = plt.subplots(figsize=(1.2 * n + 2, 1.2 * n + 2))
         im = ax.imshow(corr.values, vmin=0, vmax=1, cmap="viridis")
@@ -270,7 +273,7 @@ def plot_batch_correlation(mat, lib_of_ref, group, colors):
         ax_top.set_yticks([])
         ax_top.tick_params(axis="x", bottom=False, labelbottom=False)
         ax_top.set_title(f"{library} batch correlation{group['title_suffix']}\n"
-                         f"(log1p read-pair counts; peptides with {FILTER_DESCRIPTION})")
+                         f"(log1p read-pair counts; {len(sub)} peptides with {GROUP_FILTER_DESCRIPTION})")
         fig.colorbar(im, cax=cax)
         # anchored to the colorbar (in its axes units) so it sits just past the colorbar's tick labels
         cax.legend(handles=treatment_legend_handles(sub_samples, colors), loc="center left",
@@ -320,7 +323,7 @@ def plot_pca(scores, explained_var, n_eligible, group, colors):
     which = "all samples" if group["name"] == "all" else f"{group['name']} samples only"
     ax.set_title(f"PCA of samples{group['title_suffix']}\n(computed on {which}: log10(CPM + 1), top "
                  f"{min(PCA_N_TOP_VARIABLE_PEPTIDES, n_eligible)} most variable of {n_eligible} peptides\n"
-                 f"with >= {MATRIX_FILTER_MIN_COUNT} reads in >= {MATRIX_FILTER_MIN_SAMPLES} of these samples)",
+                 f"with {GROUP_FILTER_DESCRIPTION})",
                  fontsize=10)
     legend_outside(ax, treatment_legend_handles(group["samples"], colors, kind="marker")
                    + style_legend_handles(group, markers, kind="marker"), fontsize=8)
@@ -340,9 +343,10 @@ def main():
 
     lib_of_ref = meta.set_index("ref_id")["library"]
 
-    # Correlation heatmaps and top_peptides.py use the row-filtered matrix;
-    # the PCA applies the same filter within each figure group instead (see
-    # compute_pca); library-completeness metrics below use the raw matrix.
+    # The all-sample filtered matrix is written for sharing (and feeds
+    # top_peptides.py's tables); the between-sample figures apply the same
+    # filter within each figure group instead (passes_filter); library-
+    # completeness metrics below use the raw matrix.
     mat_filtered, filter_report, filter_library_report = filter_matrix(mat, lib_of_ref)
     mat_filtered.to_csv(RESULTS_DIR / "count_matrix_filtered.csv")
     filter_report.to_csv(RESULTS_DIR / "filter_report.csv", index=False)
@@ -400,7 +404,7 @@ def main():
     for group in groups:
         plot_rank_abundance(mat, lib_of_ref, group, colors)
         plot_lorenz(mat, lib_of_ref, group, colors)
-        plot_batch_correlation(mat_filtered, lib_of_ref, group, colors)
+        plot_batch_correlation(mat, lib_of_ref, group, colors)
         plot_shannon(qc, group, colors)
         if pca_written:
             own_refs = lib_of_ref[lib_of_ref == libraries[0]].index.intersection(mat.index)
@@ -427,13 +431,15 @@ def main():
     lines.append(f"- Coverage: `*_min{COVERAGE_MIN_COUNT}` QC columns and the solid coverage bars count a peptide as "
                  f"detected only with >= {COVERAGE_MIN_COUNT} reads; the denominator is always the full designed "
                  f"library. Rank-abundance, Lorenz, Shannon entropy and evenness use the raw matrix.")
-    lines.append(f"- PCA: computed separately for each figure group (all samples, each IP) on log10(CPM + 1) of "
-                 f"the peptides with >= {MATRIX_FILTER_MIN_COUNT} reads in >= {MATRIX_FILTER_MIN_SAMPLES} of that "
-                 f"group's samples (top {PCA_N_TOP_VARIABLE_PEPTIDES} most variable); scores in each figures "
-                 f"folder's pca_scores.csv. Axes are not comparable between groups.")
-    lines.append(f"- Matrix filter ({FILTER_DESCRIPTION}), used for batch correlation and the top-peptide "
-                 f"heatmap/tables: [count_matrix_filtered.csv](count_matrix_filtered.csv), per-sample reads removed "
-                 f"in [filter_report.csv](filter_report.csv).")
+    lines.append(f"- Matrix filter (>= {MATRIX_FILTER_MIN_COUNT} reads in >= {MATRIX_FILTER_MIN_SAMPLES} samples), "
+                 f"applied within each figure group (all samples, each IP) on that group's samples only for the PCA, "
+                 f"batch correlation and top-variable heatmaps -- so the IP4 figures only use peptides seen in IP4 "
+                 f"samples. Across all samples it gives [count_matrix_filtered.csv](count_matrix_filtered.csv) "
+                 f"(also used for the top-abundant tables; per-sample reads removed in "
+                 f"[filter_report.csv](filter_report.csv)), summarised below.")
+    lines.append(f"- PCA: computed separately for each figure group on log10(CPM + 1) of that group's filtered "
+                 f"peptides (top {PCA_N_TOP_VARIABLE_PEPTIDES} most variable); scores in each figures folder's "
+                 f"pca_scores.csv. Axes are not comparable between groups.")
     lines.append("")
     lines.append(filter_library_report.reset_index().to_markdown(index=False))
     lines.append("")

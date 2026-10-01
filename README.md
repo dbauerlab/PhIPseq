@@ -199,10 +199,13 @@ checkout):
   no NAs; `min_samples = 2` matches the replicate count, so a peptide
   consistently seen in one condition's replicates is kept without needing
   group labels. Written to `count_matrix_filtered.csv` (per-sample reads
-  removed in `filter_report.csv`) and used by the between-sample analyses
-  only: batch correlation and `top_peptides.py` (whose CPM still uses each
-  sample's raw read total). The PCA applies the same thresholds *within
-  each figure group* instead (see below). It is never used for coverage — the
+  removed in `filter_report.csv`) — the shareable filtered matrix, also
+  used for the top-abundant-peptide tables (whose CPM still uses each
+  sample's raw read total). The between-sample figures — PCA, batch
+  correlation and the top-variable heatmap — instead apply the same
+  thresholds **within each figure group** (`passes_filter` on just that
+  group's samples), so e.g. the IP4 figures only use peptides with >= 10
+  reads in >= 2 IP4 samples (74,908 here), not ones kept because of IP5. It is never used for coverage — the
   dropped rows are by definition the undetected ones, so coverage over the
   kept rows would be inflated.
 - Rank-abundance, Lorenz, Shannon entropy and evenness still use the raw
@@ -757,14 +760,16 @@ override it at submission time.
   differ most between samples, and which dominate each sample.
 - Inputs: `reference/samples.tsv` and `reference/samples_meta.csv` (or
   first/second CLI args); `<run_dir>/reference/combined_metadata.csv`;
-  `<run_dir>/results/count_matrix_filtered.csv` (plus `count_matrix.csv`
-  for per-sample read totals); `reference/figure_params.json`
+  `<run_dir>/results/count_matrix.csv` (heatmap, filtered within each
+  group) and `count_matrix_filtered.csv` (tables);
+  `reference/figure_params.json`
   (`heatmap_n_top_variable_peptides`, `top_abundant_n_peptides`).
 - Outputs:
   - `top_variable_heatmap.png` in `<run_dir>/results/figures/` and each
     `<run_dir>/results/figures/<ip>/` — the top N (default 100) peptides by
-    variance of log10(CPM + 1) *within that group's samples* (so each IP
-    picks its own top N), rows hierarchically clustered (average linkage),
+    variance of log10(CPM + 1) *within that group's samples*, among the
+    peptides passing the matrix filter within the group (so each IP picks
+    its own top N), rows hierarchically clustered (average linkage),
     columns in treatment order under a treatment colour strip, rows
     labelled `source_id | organism | protein start-end` (shortened).
   - `<run_dir>/results/top_abundant_peptides.csv` — long format, one row

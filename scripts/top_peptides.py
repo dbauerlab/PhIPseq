@@ -11,8 +11,9 @@
      results/top_abundant_peptides_wide.csv -- the same as a rank x sample
      grid of short peptide labels, for scanning by eye.
 
-Both use the row-filtered matrix (count_matrix_filtered.csv, see
-count_filters.py). Counts are CPM-normalised first -- per sample, against
+The heatmap applies the matrix filter within each group, on that group's
+samples only (count_filters.passes_filter); the tables use the
+all-sample filtered matrix (count_matrix_filtered.csv). Counts are CPM-normalised first -- per sample, against
 its full own-library read total from the raw matrix, so CPM means the same
 as before filtering -- since sequencing depth differs several-fold between
 samples.
@@ -34,7 +35,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.cluster.hierarchy import leaves_list, linkage
 
-from count_filters import FILTER_DESCRIPTION
+from count_filters import GROUP_FILTER_DESCRIPTION, passes_filter
 from sample_groups import figure_groups, load_samples, sample_label, treatment_legend_handles
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -90,9 +91,11 @@ def cpm_matrix(mat_filtered, mat_raw, lib_of_ref, samples):
     return mat_filtered.loc[own.intersection(mat_filtered.index), samples["tc_id"]] / lib_sizes * 1e6
 
 
-def plot_top_variable_heatmap(log_cpm, meta, group, colors):
+def plot_top_variable_heatmap(log_cpm, mat_raw, meta, group, colors):
     samples = group["samples"]
     sub = log_cpm[samples["tc_id"]]
+    sub = sub.loc[passes_filter(mat_raw.loc[sub.index, samples["tc_id"]])]
+    n_eligible = len(sub)
     top = sub.loc[sub.var(axis=1).sort_values(ascending=False).head(N_TOP_VARIABLE).index]
     if len(top) > 2:
         top = top.iloc[leaves_list(linkage(top.to_numpy(), method="average", metric="euclidean",
@@ -115,7 +118,8 @@ def plot_top_variable_heatmap(log_cpm, meta, group, colors):
     ax_top.set_yticks([])
     ax_top.tick_params(axis="x", bottom=False, labelbottom=False)
     ax_top.set_title(f"Top {n_rows} most variable peptides{group['title_suffix']}\n"
-                     f"(variance of log10(CPM + 1); rows clustered; peptides with {FILTER_DESCRIPTION})",
+                     f"(variance of log10(CPM + 1) among {n_eligible} peptides with {GROUP_FILTER_DESCRIPTION}; "
+                     "rows clustered)",
                      fontsize=11)
 
     cax = divider.append_axes("left", size=0.2, pad=0.6)
@@ -163,10 +167,12 @@ def main():
     mat_raw = pd.read_csv(RESULTS_DIR / "count_matrix.csv", index_col=0)
     mat = pd.read_csv(RESULTS_DIR / "count_matrix_filtered.csv", index_col=0)
 
-    cpm = cpm_matrix(mat, mat_raw, lib_of_ref, samples)
-    log_cpm = np.log10(cpm + 1)
+    # heatmap: raw matrix, filtered within each group by plot_top_variable_heatmap
+    log_cpm_raw = np.log10(cpm_matrix(mat_raw, mat_raw, lib_of_ref, samples) + 1)
     for group in figure_groups(samples, FIG_DIR):
-        plot_top_variable_heatmap(log_cpm, meta, group, colors)
+        plot_top_variable_heatmap(log_cpm_raw, mat_raw, meta, group, colors)
+
+    cpm = cpm_matrix(mat, mat_raw, lib_of_ref, samples)
 
     table = top_abundant_table(mat, cpm, meta, samples)
     out = RESULTS_DIR / "top_abundant_peptides.csv"

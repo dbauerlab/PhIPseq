@@ -11,9 +11,15 @@ reference/filter_params.json):
      keep a peptide (row) only if it has >= min_count reads in >=
      min_samples samples -- min_samples matching the replicate count, so a
      peptide consistently seen in one condition's replicates survives
-     without needing group labels. Written as count_matrix_filtered.csv and
-     used for the between-sample analyses (PCA, correlation, top-peptide
-     heatmap/tables). Whole rows are dropped, so there are no NAs.
+     without needing group labels. Whole rows are dropped, so there are
+     no NAs. Applied in two ways:
+       - across all samples -> count_matrix_filtered.csv (the shareable
+         filtered matrix; also used for the top-abundant-peptide tables);
+       - within each figure group (all samples / one IP), via
+         passes_filter() on just that group's samples, for the
+         between-sample figures (PCA, batch correlation, top-variable
+         heatmap) -- so e.g. the IP4 figures only use peptides seen in
+         IP4 samples, not ones kept because of IP5.
      Never used for coverage: the dropped rows are by definition the
      undetected ones, so coverage over the kept rows would be inflated.
 """
@@ -30,12 +36,20 @@ MATRIX_FILTER_MIN_COUNT = _filter_params["matrix_filter_min_count"]
 MATRIX_FILTER_MIN_SAMPLES = _filter_params["matrix_filter_min_samples"]
 
 FILTER_DESCRIPTION = f">= {MATRIX_FILTER_MIN_COUNT} reads in >= {MATRIX_FILTER_MIN_SAMPLES} samples"
+GROUP_FILTER_DESCRIPTION = (f">= {MATRIX_FILTER_MIN_COUNT} reads in >= {MATRIX_FILTER_MIN_SAMPLES} "
+                            f"of these samples")
+
+
+def passes_filter(counts):
+    """Boolean per row of a peptides x samples count frame: does the
+    peptide pass the matrix filter within these samples?"""
+    return (counts >= MATRIX_FILTER_MIN_COUNT).sum(axis=1) >= MATRIX_FILTER_MIN_SAMPLES
 
 
 def filter_matrix(mat, lib_of_ref):
     """Apply the matrix filter (C). Returns (filtered matrix, per-sample
     report, per-library peptide counts before/after)."""
-    keep = (mat >= MATRIX_FILTER_MIN_COUNT).sum(axis=1) >= MATRIX_FILTER_MIN_SAMPLES
+    keep = passes_filter(mat)
     filtered = mat.loc[keep]
 
     raw_reads = mat.sum(axis=0)
