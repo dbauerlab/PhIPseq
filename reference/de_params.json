@@ -1,0 +1,10 @@
+{
+  "reference_treatment": "Vir3 only",
+  "alpha": 0.05,
+  "lfc_threshold": 1,
+  "size_factors_fit_type": "poscounts",
+  "shrink_lfc": false,
+  "n_label_top": 8,
+  "heatmap_max_peptides": 100,
+  "organism_plot_max_organisms": 25
+}

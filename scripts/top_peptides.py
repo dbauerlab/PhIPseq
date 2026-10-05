@@ -59,12 +59,17 @@ ROW_HEIGHT_IN = 0.14  # per peptide row: keeps ROW_LABEL_FONTSIZE labels from ov
 COL_WIDTH_IN = 0.35
 
 
-def short_name(text, max_len):
-    """Annotation trimmed for an axis label: drop parenthesised synonyms /
-    EC numbers, underscores -> spaces, then truncate."""
+def short_name(text, max_len, strip_parens=True):
+    """Annotation trimmed for an axis label: underscores -> spaces, then
+    truncate. strip_parens drops parenthesised synonyms / EC numbers --
+    turn it off where they are the only thing distinguishing two entries
+    (e.g. virus strains sharing a species name)."""
     if not isinstance(text, str) or not text:
         return "unknown"
-    text = text.replace("_", " ").split(" (")[0].strip()
+    text = text.replace("_", " ")
+    if strip_parens:
+        text = text.split(" (")[0]
+    text = text.strip()
     return text if len(text) <= max_len else text[:max_len - 1] + "…"
 
 
@@ -91,24 +96,24 @@ def cpm_matrix(mat_filtered, mat_raw, lib_of_ref, samples):
     return mat_filtered.loc[own.intersection(mat_filtered.index), samples["tc_id"]] / lib_sizes * 1e6
 
 
-def plot_top_variable_heatmap(log_cpm, mat_raw, meta, group, colors):
+def draw_peptide_heatmap(values, meta, group, colors, title, out_path, cbar_label="log10(CPM + 1)"):
+    """Peptides x samples heatmap (rows clustered, columns in the group's
+    sample order under a treatment colour strip, rows labelled with
+    peptide_label). Shared with differential_enrichment.py."""
     samples = group["samples"]
-    sub = log_cpm[samples["tc_id"]]
-    sub = sub.loc[passes_filter(mat_raw.loc[sub.index, samples["tc_id"]])]
-    n_eligible = len(sub)
-    top = sub.loc[sub.var(axis=1).sort_values(ascending=False).head(N_TOP_VARIABLE).index]
-    if len(top) > 2:
-        top = top.iloc[leaves_list(linkage(top.to_numpy(), method="average", metric="euclidean",
-                                           optimal_ordering=True))]
-    n_rows, n_cols = top.shape
+    values = values[samples["tc_id"]]
+    if len(values) > 2:
+        values = values.iloc[leaves_list(linkage(values.to_numpy(), method="average", metric="euclidean",
+                                                 optimal_ordering=True))]
+    n_rows, n_cols = values.shape
 
     fig, ax = plt.subplots(figsize=(COL_WIDTH_IN * n_cols + 7, ROW_HEIGHT_IN * n_rows + 3))
-    im = ax.imshow(top.to_numpy(), aspect="auto", cmap="viridis", interpolation="nearest")
+    im = ax.imshow(values.to_numpy(), aspect="auto", cmap="viridis", interpolation="nearest")
     ax.set_xticks(range(n_cols))
     ax.set_xticklabels([sample_label(srow, group) for _, srow in samples.iterrows()],
                        rotation=90, fontsize=HEATMAP_TICK_FONTSIZE * 0.75)
     ax.set_yticks(range(n_rows))
-    ax.set_yticklabels(peptide_labels(meta, top.index), fontsize=ROW_LABEL_FONTSIZE)
+    ax.set_yticklabels(peptide_labels(meta, values.index), fontsize=ROW_LABEL_FONTSIZE)
     ax.yaxis.tick_right()
 
     divider = make_axes_locatable(ax)
@@ -117,21 +122,30 @@ def plot_top_variable_heatmap(log_cpm, mat_raw, meta, group, colors):
     ax_top.imshow(strip[np.newaxis, :, :], aspect="auto")
     ax_top.set_yticks([])
     ax_top.tick_params(axis="x", bottom=False, labelbottom=False)
-    ax_top.set_title(f"Top {n_rows} most variable peptides{group['title_suffix']}\n"
-                     f"(variance of log10(CPM + 1) among {n_eligible} peptides with {GROUP_FILTER_DESCRIPTION}; "
-                     "rows clustered)",
-                     fontsize=11)
+    ax_top.set_title(title, fontsize=11)
 
     cax = divider.append_axes("left", size=0.2, pad=0.6)
-    fig.colorbar(im, cax=cax, label="log10(CPM + 1)")
+    fig.colorbar(im, cax=cax, label=cbar_label)
     cax.yaxis.set_ticks_position("left")
     cax.yaxis.set_label_position("left")
     # below the sample tick labels, clear of the long peptide labels on the right
     ax.legend(handles=treatment_legend_handles(samples, colors)[1:], title="treatment", loc="upper center",
               bbox_to_anchor=(0.5, -0.02 - 2.2 / fig.get_figheight()), ncol=3, fontsize=9)
-    fig.savefig(group["fig_dir"] / "top_variable_heatmap.png", dpi=150, bbox_inches="tight")
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Wrote {group['fig_dir'] / 'top_variable_heatmap.png'}", file=sys.stderr)
+    print(f"Wrote {out_path}", file=sys.stderr)
+
+
+def plot_top_variable_heatmap(log_cpm, mat_raw, meta, group, colors):
+    samples = group["samples"]
+    sub = log_cpm[samples["tc_id"]]
+    sub = sub.loc[passes_filter(mat_raw.loc[sub.index, samples["tc_id"]])]
+    n_eligible = len(sub)
+    top = sub.loc[sub.var(axis=1).sort_values(ascending=False).head(N_TOP_VARIABLE).index]
+    title = (f"Top {len(top)} most variable peptides{group['title_suffix']}\n"
+             f"(variance of log10(CPM + 1) among {n_eligible} peptides with {GROUP_FILTER_DESCRIPTION}; "
+             "rows clustered)")
+    draw_peptide_heatmap(top, meta, group, colors, title, group["fig_dir"] / "top_variable_heatmap.png")
 
 
 def top_abundant_table(mat, cpm, meta, samples):

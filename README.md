@@ -60,11 +60,13 @@ PhIPseq/
 │   ├── run_sample.sbatch          # SLURM array job wrapping run_sample.sh, one task per sample
 │   ├── build_index.sbatch         # SLURM job: bowtie2-build the combined index (written to run_dir)
 │   ├── summarize.sbatch           # SLURM job: summarize.py + the four figure/table scripts
+│   ├── differential.sbatch        # SLURM job: differential_enrichment.py (runs after summarize)
 │   ├── summarize.py               # count matrix + qc_summary.csv + core figures + summary.md (written to run_dir)
 │   ├── completeness_figures.py    # coverage / rarefaction / detection-histogram figures
 │   ├── evenness_summary_figure.py # per-sample evenness figure
 │   ├── overview_figure.py         # combined coverage+evenness overview figure
 │   ├── top_peptides.py            # top-N most variable peptides heatmap + top-N most abundant peptides tables
+│   ├── differential_enrichment.py # DESeq2-style enrichment vs the background library, per IP
 │   ├── sample_groups.py           # shared: sample sheet + metadata merge, treatment colours, all/per-IP figure groups
 │   └── count_filters.py           # shared: low-count coverage threshold + count-matrix row filter
 ├── reference/                     # hand-maintained config, tracked in the repo
@@ -73,6 +75,7 @@ PhIPseq/
 │   ├── build_reference_params.json# vector anchor sequences, minimum Vir3 insert length
 │   ├── figure_params.json         # outlier threshold, legend/tick layout, PCA size, optional treatment_colors
 │   ├── filter_params.json         # low-count filtering thresholds (coverage threshold, matrix filter)
+│   ├── de_params.json             # differential enrichment: reference treatment, alpha, LFC threshold
 │   ├── hpc_modules.json           # pinned cutadapt/bowtie2/samtools HPC module versions
 │   ├── adapters.json              # per-library R1/R2 constant adapter sequences (hand-maintained)
 │   ├── samples.tsv                # sample sheet: tc_id, library, sample_prefix
@@ -86,6 +89,7 @@ PhIPseq/
 │       ├── <tc_id>/                  # per-sample counts.tsv, cutadapt.log, bowtie2.log
 │       ├── count_matrix.csv, qc_summary.csv, summary.md
 │       ├── count_matrix_filtered.csv, filter_report.csv
+│       ├── differential/             # differential enrichment results, figures and summary.md
 │       ├── top_abundant_peptides.csv, top_abundant_peptides_wide.csv
 │       └── figures/                  # PNG figures, all samples
 │           └── <ip>/                 # same figures, one folder per IP condition (IP4/, IP5/)
@@ -211,6 +215,43 @@ checkout):
 - Rank-abundance, Lorenz, Shannon entropy and evenness still use the raw
   matrix (evenness already calls out <=10-read peptides explicitly via
   `outlier_threshold`).
+
+### Differential enrichment
+
+`scripts/differential_enrichment.py` (run by `scripts/differential.sbatch`,
+after `summarize.sbatch` has written `count_matrix.csv`) tests which
+peptides are enriched over the background library, **separately within each
+IP**. Thresholds live in `reference/de_params.json`.
+
+- **Model** — one DESeq2-style negative-binomial fit per contrast
+  (PyDESeq2): every non-reference treatment, including the `Phage & beads`
+  mock IP, against `reference_treatment` (`Vir3 only`) among that IP's
+  samples. Two-sided Wald test, BH-adjusted p-values with DESeq2
+  independent filtering. **Enriched** = `padj < alpha` and
+  `log2FoldChange > lfc_threshold`.
+- **Per contrast, not per IP.** Fitting all of an IP's samples in one model
+  shares dispersion across more samples, but then admits peptides absent
+  from the 2 reference samples entirely (they pass the per-IP filter on
+  other treatments). Those have no finite fold-change estimate — PyDESeq2
+  returns its optimiser bound, ±30/ln2 = ±43.28 — which broke apeGLM
+  shrinkage globally and let 2–8 CPM noise reach `padj ~1e-17`, outranking
+  the real signal. Fitting per contrast removes the unbounded estimates and
+  puts the expected hits on top (see below).
+- **Size factors**: `poscounts`, since the default median-of-ratios needs
+  peptides counted in every sample (only 47 in IP4).
+- **LFC shrinkage is off** (`shrink_lfc: false`): PyDESeq2's apeGLM proved
+  unstable here — for some peptides the shrunken value collapsed to ~0.3
+  while the raw LFC was 13–14. Raw `log2FoldChange` is reported and
+  plotted.
+- **Calibration check** — `frac_p_below_alpha` per contrast should sit near
+  `alpha` under the null. IP4's contrasts run at 0.22–0.26, so its
+  p-values are anti-conservative and its hit counts are upper bounds;
+  this matches IP4's poor replicate correlation (r = 0.01–0.16). Affected
+  contrasts are flagged in red in the volcano titles and called out in
+  `differential/summary.md`.
+- **Positive control** — IP4 `12CA5 2ug` (an anti-HA-tag antibody) returns
+  influenza hemagglutinin peptides as its top hits, which is the expected
+  result and a check that normalisation and the contrast setup are right.
 
 ### Figure groups and colouring
 
@@ -784,6 +825,44 @@ override it at submission time.
   Expects all samples to share one library.
 - Dependencies: `pandas`, `numpy`, `matplotlib` (`Agg`),
   `scipy.cluster.hierarchy`.
+
+### differential_enrichment.py
+- Purpose: DESeq2-style differential enrichment of peptides against the
+  background library, separately within each IP — see
+  [Differential enrichment](#differential-enrichment) for the method and
+  its caveats.
+- Inputs: `reference/samples.tsv` and `reference/samples_meta.csv` (or
+  first/second CLI args); `<run_dir>/reference/combined_metadata.csv`;
+  `<run_dir>/results/count_matrix.csv` (**raw integer counts** — DESeq2
+  models counts, not CPM); `reference/de_params.json` and
+  `reference/filter_params.json`.
+- Outputs, under `<run_dir>/results/differential/`:
+  - `differential_results.csv` — every peptide x every contrast (long
+    format): `ip`, `treatment`, `reference`, `n_treatment`/`n_reference`,
+    `baseMean`, `log2FoldChange`, `lfcSE`, `stat`, `pvalue`, `padj`,
+    `mean_cpm_treatment`/`mean_cpm_reference`, `filtered`,
+    `lfc_unbounded`, `enriched`/`depleted`, and peptide annotation.
+  - `<ip>/<treatment>_vs_<reference>.csv` — one contrast, sorted by padj.
+  - `enrichment_summary.csv` — per contrast: n tested / enriched /
+    depleted, `frac_p_below_alpha`, top hit.
+  - `organism_summary.csv` — enriched peptide counts per organism.
+  - `<ip>/size_factors.csv`, `<ip>/*.png` (volcano, MA, p-value
+    histograms, dispersions, enriched-peptide heatmap, enrichment counts,
+    organism dot plot), and `summary.md`.
+- Reuses `sample_groups.py` (treatment colours), `count_filters.py`
+  (`passes_filter`, applied within each contrast) and `top_peptides.py`
+  (`draw_peptide_heatmap`, `peptide_label`).
+- Threads: `SLURM_CPUS_PER_TASK` (8 in `differential.sbatch`).
+- Dependencies: `pydeseq2`, `pandas`, `numpy`, `matplotlib` (`Agg`),
+  `tabulate`.
+
+### differential.sbatch
+- Purpose: SLURM wrapper for `differential_enrichment.py` (8 CPUs, 32G,
+  4h) — separate from `summarize.sbatch` because the GLM fits are far
+  heavier than the figure scripts.
+- Requires `PHIPSEQ_REPO_DIR`, as the other `.sbatch` scripts do. Submit
+  with `--dependency=afterok:<summarize_job_id>`, or on its own if
+  `count_matrix.csv` is already current.
 
 ### evenness_summary_figure.py
 - Purpose: one figure summarizing per-sample library evenness (10th-90th

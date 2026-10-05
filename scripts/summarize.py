@@ -426,6 +426,9 @@ def main():
     lines.append("")
     lines.append("Top most abundant peptides per sample: [top_abundant_peptides.csv](top_abundant_peptides.csv)")
     lines.append("")
+    lines.append("Differential enrichment vs the background library (written separately by "
+                 "differential_enrichment.py): [differential/summary.md](differential/summary.md)")
+    lines.append("")
     lines.append("## Low-count filtering")
     lines.append("")
     lines.append(f"- Coverage: `*_min{COVERAGE_MIN_COUNT}` QC columns and the solid coverage bars count a peptide as "
