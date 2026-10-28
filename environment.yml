@@ -3,14 +3,27 @@
 # HPC's module system instead (pinned versions in reference/hpc_modules.json),
 # since specific pre-built module versions are already available on the
 # cluster.
+#
+# Build/update it with: bash scripts/setup_env.sh
+# Use it with:          conda activate phipseq
+#
+# Name of the environment (what `conda activate phipseq` refers to).
 name: phipseq
+# Where conda downloads packages from; conda-forge is the community channel
+# with the widest, most up-to-date package selection.
 channels:
   - conda-forge
+# Packages to install. ">=X" sets a minimum version; conda picks the newest
+# versions that are compatible with each other.
 dependencies:
   - python              # unpinned: always resolve the current stable conda-forge release
+  # Tables/DataFrames: reading counts, building the count matrix, CSV output.
   - pandas>=2.2
+  # Numerical arrays (CPM normalisation, statistics).
   - numpy>=2.1
+  # Plotting library used for every figure.
   - matplotlib>=3.9
+  # Scientific routines (statistics, clustering/PCA helpers) on top of numpy.
   - scipy>=1.14
   - openpyxl>=3.1        # pandas.read_excel engine, needed by build_reference.py
   - tabulate>=0.9        # pandas.DataFrame.to_markdown engine, needed by summarize.py
