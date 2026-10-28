@@ -143,8 +143,14 @@ def plot_overview(mat, lib_of_ref, group, colors):
     ax_cov.set_xticks(range(len(samples)))  # one tick per sample at x = 0, 1, 2, ...
     ax_cov.set_xticklabels(cov_labels, rotation=XTICK_ROTATION, ha="center")  # sample names, rotated
     ax_cov.set_ylabel("% of designed peptides detected")
-    # NOTE: `total` here is whatever the loop left behind, i.e. the LAST sample's library size.
-    ax_cov.set_title(f"Coverage (bar labels: peptides with >= {COVERAGE_MIN_COUNT} reads, of {total} designed)")
+    # Denominator(s) for the title, taken from the reference metadata rather than
+    # from any one sample: the number of designed peptides in each library present
+    # in this group, e.g. "115,753 designed (Vir3)". value_counts() counts ref_ids
+    # per library; .reindex(...) keeps only this group's libraries, in sample order.
+    group_libs = list(dict.fromkeys(samples["library"]))  # unique, order preserved
+    designed = lib_of_ref.value_counts().reindex(group_libs, fill_value=0)
+    designed_text = ", ".join(f"{n:,} designed ({lib})" for lib, n in designed.items())  # {n:,} = 115,753
+    ax_cov.set_title(f"Coverage (bar labels: peptides with >= {COVERAGE_MIN_COUNT} reads; {designed_text})")
     # Legend right of the coverage panel: treatment header + colour squares, then a
     # "detected at" header (an invisible Line2D whose only purpose is its label) and two
     # gray Patch swatches mimicking the light (>=1 read) and solid (>=min count) bars.

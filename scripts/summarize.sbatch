@@ -56,7 +56,7 @@ conda activate phipseq
 # splitting them into separate parallel jobs would be worth the added
 # complexity.
 # Builds count_matrix.csv, count_matrix_filtered.csv, filter_report.csv,
-# qc_summary.csv, summary.md and the core figures (incl. PCA).
+# qc_summary.csv and the core figures (incl. PCA).
 python "$PROJECT_DIR/scripts/summarize.py"
 # Coverage / rarefaction / detection-histogram figures.
 python "$PROJECT_DIR/scripts/completeness_figures.py"

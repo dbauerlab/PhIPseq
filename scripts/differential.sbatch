@@ -1,6 +1,7 @@
 #!/bin/bash
-# Differential enrichment of peptides vs the background library (see
-# scripts/differential_enrichment.py and reference/de_params.json), per IP.
+# Differential enrichment of peptides vs the reference treatment (the
+# "Phage & beads" mock IP; see scripts/differential_enrichment.py and
+# reference/de_params.json), per IP.
 # Reads count_matrix.csv, so it must run after summarize.sbatch:
 #
 #   export PHIPSEQ_REPO_DIR=/path/to/PhIPseq   # once per shell session
@@ -12,9 +13,10 @@
 # used to find the repo. More CPUs than summarize.sbatch: PyDESeq2 fits
 # ~100k peptide-wise GLMs per IP and parallelises over SLURM_CPUS_PER_TASK.
 #
-# Output goes to <run_dir>/results/differential/ (per-contrast CSVs,
+# Output goes to <run_dir>/results/<output_dir>/ (de_params.json; currently
+# differential_vs_beads/) (per-contrast CSVs,
 # differential_results.csv, enrichment_summary.csv, organism_summary.csv,
-# figures and summary.md).
+# and figures).
 
 # #SBATCH lines are comments to bash but options to `sbatch` (see
 # run_sample.sbatch for details).

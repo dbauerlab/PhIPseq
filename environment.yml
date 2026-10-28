@@ -26,5 +26,4 @@ dependencies:
   # Scientific routines (statistics, clustering/PCA helpers) on top of numpy.
   - scipy>=1.14
   - openpyxl>=3.1        # pandas.read_excel engine, needed by build_reference.py
-  - tabulate>=0.9        # pandas.DataFrame.to_markdown engine, needed by summarize.py
   - pydeseq2>=0.5        # DESeq2-style differential enrichment, needed by differential_enrichment.py

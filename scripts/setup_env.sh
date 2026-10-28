@@ -3,7 +3,7 @@
 # Run once on the cluster, and again whenever environment.yml changes.
 #
 # This only provisions the Python side of the pipeline (pandas, numpy,
-# matplotlib, scipy, openpyxl, tabulate, pydeseq2 -- see environment.yml).
+# matplotlib, scipy, openpyxl, pydeseq2 -- see environment.yml).
 # cutadapt/bowtie2/samtools are provided by
 # the HPC module system instead -- see reference/hpc_modules.json and the
 # `module load` lines in scripts/*.sbatch.

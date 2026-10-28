@@ -19,7 +19,7 @@ Writes, all under <run_dir>:
   results/qc_summary.csv
   results/figures/*.png        (all samples)
   results/figures/<ip>/*.png   (one folder per IP condition)
-  results/summary.md
+Exits with an error if any sample's counts.tsv is missing or empty.
 <run_dir> is configured in reference/paths.json, separate from this repo
 checkout.
 
@@ -51,11 +51,11 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Sibling modules in scripts/ (importable because the script is run as
 # `python scripts/summarize.py`, which puts scripts/ on sys.path).
-# count_filters: the low-count thresholds from reference/filter_params.json
-# (coverage_min_count=10, matrix_filter_min_count=10, matrix_filter_min_samples=2),
-# human-readable descriptions of them, and the filter functions themselves.
+# count_filters: the coverage threshold from reference/filter_params.json
+# (coverage_min_count=10), human-readable descriptions of the filters, and the
+# filter functions themselves.
 from count_filters import (COVERAGE_MIN_COUNT, FILTER_DESCRIPTION, GROUP_FILTER_DESCRIPTION,
-                           MATRIX_FILTER_MIN_COUNT, MATRIX_FILTER_MIN_SAMPLES, filter_matrix, passes_filter)
+                           filter_matrix, passes_filter)
 # sample_groups: loads/merges the sample sheets, fixes the treatment -> colour map,
 # defines the figure groups (all samples + one per IP) and shared legend helpers.
 from sample_groups import (LINESTYLE_CYCLE, MARKER_CYCLE, figure_groups, legend_outside, load_samples,
@@ -87,15 +87,12 @@ PCA_N_TOP_VARIABLE_PEPTIDES = _fig_params["pca_n_top_variable_peptides"]
 # load_counts: read one sample's counts.tsv.
 #   In:  tc_id -- sample ID, i.e. the name of its folder under results/.
 #   Out: dict {ref_id: read-pair count}; only peptides seen at least once are present.
-#        An empty dict if the file does not exist (sample not run / failed).
-#   Used by build_matrix() to assemble the peptide x sample matrix.
+#   Used by build_matrix() to assemble the peptide x sample matrix, after
+#   check_counts_files() has confirmed the file exists and is non-empty.
 # counts.tsv is written by run_sample.sh as "<ref_id>\t<count>" lines, e.g.
 #   "CoV|BCA25643.133.BC1\t61"
 def load_counts(tc_id):
     path = RESULTS_DIR / tc_id / "counts.tsv"
-    # A missing file is silently treated as "no reads at all" (all-zero column).
-    if not path.exists():
-        return {}
     counts = {}
     with open(path) as f:  # context manager: file is closed automatically afterwards
         for line in f:  # iterating a file object yields one line at a time
@@ -103,6 +100,28 @@ def load_counts(tc_id):
             ref_id, n = line.rstrip("\n").split("\t")
             counts[ref_id] = int(n)  # counts are text in the file -> convert to int
     return counts
+
+
+# check_counts_files: stop early if any sample has no usable counts.tsv.
+#   In:  samples -- the merged sample sheet (column tc_id).
+#   Out: nothing; exits with an error listing every missing/empty file.
+#   Used by main() before build_matrix(). A missing file would otherwise become
+#   an all-zero column that silently breaks the QC and PCA; an empty (0-byte)
+#   file usually means run_sample.sh failed part-way. All problems are
+#   collected first so a single run reports every affected sample at once.
+def check_counts_files(samples):
+    problems = []
+    for tc_id in samples["tc_id"]:
+        path = RESULTS_DIR / tc_id / "counts.tsv"
+        if not path.exists():
+            problems.append(f"  {tc_id}: missing {path}")
+        elif path.stat().st_size == 0:  # .stat().st_size = file size in bytes
+            problems.append(f"  {tc_id}: empty {path}")
+    if problems:
+        # sys.exit with a string prints it to stderr and exits with status 1,
+        # so summarize.sbatch (set -e) stops before the figure scripts run.
+        sys.exit("ERROR: counts.tsv missing or empty for these samples (re-run run_sample.sh for "
+                 "them, or drop them from the sample sheet):\n" + "\n".join(problems))
 
 
 # build_matrix: assemble every sample's counts into one table.
@@ -200,7 +219,8 @@ def sample_readstats(tc_id):
     trimmed/aligned together upstream in run_sample.sh), so there's nothing
     left to sum across lanes/mates the way this used to."""
     # Start with NaN ("not a number" = missing) for everything, so a missing
-    # log simply leaves its columns empty rather than crashing.
+    # log simply leaves its columns empty rather than crashing (with a warning
+    # printed below, since counts.tsv is present but the run's logs are not).
     stats = {
         "raw_read_pairs": float("nan"),
         "trim_rate": float("nan"),
@@ -215,8 +235,12 @@ def sample_readstats(tc_id):
         # Fraction of pairs that kept an adapter match in both mates (run_sample.sh
         # uses --discard-untrimmed). Conditional expression guards against /0.
         stats["trim_rate"] = written / raw if raw else float("nan")
+    else:
+        print(f"WARNING: {cpath} missing -- read/trim stats for {tc_id} left blank", file=sys.stderr)
     bpath = RESULTS_DIR / tc_id / "bowtie2.log"
-    if bpath.exists():
+    if not bpath.exists():
+        print(f"WARNING: {bpath} missing -- mapping stats for {tc_id} left blank", file=sys.stderr)
+    else:
         # Unpack all five values; the leading underscore marks concordant_0 as unused.
         total_pairs, _concordant_0, concordant_1, concordant_multi, overall_pct = parse_bowtie2_paired_log(bpath)
         # Fraction of (trimmed) pairs aligning concordantly at all = unique + multimapped.
@@ -577,7 +601,7 @@ def plot_pca(scores, explained_var, n_eligible, group, colors):
 # main: the whole run, top to bottom.
 #   1. build + save the raw count matrix; 2. apply/save the all-sample matrix filter;
 #   3. compute per-sample QC -> qc_summary.csv; 4. draw every figure for each
-#   figure group (+ PCA if all samples share one library); 5. write summary.md.
+#   figure group (+ PCA if all samples share one library).
 def main():
     # Create results/figures/ (and parents) if needed; exist_ok avoids an error if present.
     FIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -588,6 +612,7 @@ def main():
     meta = pd.read_csv(META_CSV, dtype=str)
     meta["ref_id"] = meta["ref_id"].astype(str)  # already str via dtype=str; harmless safeguard
 
+    check_counts_files(samples)  # exits here if any counts.tsv is missing/empty
     print("Building count matrix...", file=sys.stderr)  # progress messages go to stderr
     mat = build_matrix(samples, meta)
     mat.to_csv(RESULTS_DIR / "count_matrix.csv")  # row index (ref_id) written as first column
@@ -691,65 +716,6 @@ def main():
                 write_pca_scores(scores, explained_var, group)
                 print(f"PCA{group['title_suffix']}: {n_eligible} eligible peptides, PC1 {explained_var[0]:.1%}, "
                       f"PC2 {explained_var[1]:.1%}", file=sys.stderr)
-
-    # --- Markdown summary ---
-    # Build the report as a list of lines, joined with newlines at the end.
-    lines = ["# PhIP-seq library QC summary", ""]
-    lines.append("## Per-sample QC")
-    lines.append("")
-    # DataFrame -> Markdown table (needs the `tabulate` package); floats to 3 d.p.
-    lines.append(qc.to_markdown(index=False, floatfmt=".3f"))
-    lines.append("")
-    # Links to files written by later scripts (top_peptides.py, differential_enrichment.py).
-    lines.append("Top most abundant peptides per sample: [top_abundant_peptides.csv](top_abundant_peptides.csv)")
-    lines.append("")
-    lines.append("Differential enrichment vs the background library (written separately by "
-                 "differential_enrichment.py): [differential/summary.md](differential/summary.md)")
-    lines.append("")
-    # Plain-language explanation of the low-count filters, with the configured
-    # thresholds filled in by the f-strings.
-    lines.append("## Low-count filtering")
-    lines.append("")
-    lines.append(f"- Coverage: `*_min{COVERAGE_MIN_COUNT}` QC columns and the solid coverage bars count a peptide as "
-                 f"detected only with >= {COVERAGE_MIN_COUNT} reads; the denominator is always the full designed "
-                 f"library. Rank-abundance, Lorenz, Shannon entropy and evenness use the raw matrix.")
-    lines.append(f"- Matrix filter (>= {MATRIX_FILTER_MIN_COUNT} reads in >= {MATRIX_FILTER_MIN_SAMPLES} samples), "
-                 f"applied within each figure group (all samples, each IP) on that group's samples only for the PCA, "
-                 f"batch correlation and top-variable heatmaps -- so the IP4 figures only use peptides seen in IP4 "
-                 f"samples. Across all samples it gives [count_matrix_filtered.csv](count_matrix_filtered.csv) "
-                 f"(also used for the top-abundant tables; per-sample reads removed in "
-                 f"[filter_report.csv](filter_report.csv)), summarised below.")
-    lines.append(f"- PCA: computed separately for each figure group on log10(CPM + 1) of that group's filtered "
-                 f"peptides (top {PCA_N_TOP_VARIABLE_PEPTIDES} most variable); scores in each figures folder's "
-                 f"pca_scores.csv. Axes are not comparable between groups.")
-    lines.append("")
-    # Per-library peptides raw/kept/removed table; reset_index turns the "library"
-    # index into an ordinary column so it shows up in the Markdown table.
-    lines.append(filter_library_report.reset_index().to_markdown(index=False))
-    lines.append("")
-    # Names (without .png) of every figure to embed, in display order. Includes
-    # figures made by the other scripts run after this one (completeness_figures.py,
-    # evenness_summary_figure.py, overview_figure.py, top_peptides.py).
-    figure_names = ["rank_abundance", "lorenz_curves"]
-    # One batch-correlation figure per library (list comprehension over unique libraries).
-    figure_names += [f"batch_correlation_{lib}" for lib in samples["library"].unique()]
-    # Add the PCA figure only when PCA ran (list + empty-or-one-item list).
-    figure_names += ["shannon_entropy"] + (["pca_samples"] if pca_written else [])
-    figure_names += ["coverage_bar", "rarefaction_curves", f"rarefaction_curves_min{COVERAGE_MIN_COUNT}",
-                     "detection_histogram", "evenness_summary",
-                     "overview_all_samples", "top_variable_heatmap"]
-    # One "## Figures (...)" section per figure group, embedding each image.
-    for group in groups:
-        lines.append(f"## Figures{group['title_suffix']}")
-        lines.append("")
-        # Folder path relative to results/ (where summary.md lives), e.g. "figures/IP4",
-        # with forward slashes (as_posix) so Markdown links work on any OS.
-        rel_dir = group["fig_dir"].relative_to(RESULTS_DIR).as_posix()
-        for name in figure_names:
-            lines.append(f"![{name}]({rel_dir}/{name}.png)")  # Markdown image syntax
-            lines.append("")
-    (RESULTS_DIR / "summary.md").write_text("\n".join(lines))
-    print(f"Wrote {RESULTS_DIR / 'summary.md'}", file=sys.stderr)
 
 
 # Run main() only when executed as a script, not when imported as a module.
